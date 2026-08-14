@@ -821,11 +821,13 @@ static void pill_rb_initialize_body(
       pill_rb_medication_size(medication_index);
 
   int16_t arena_width = 228;
+  int16_t arena_height = 228;
   int16_t arena_y = 0;
 
   if (s_canvas_layer) {
     const GRect bounds = layer_get_bounds(s_canvas_layer);
     arena_width = bounds.size.w;
+    arena_height = bounds.size.h;
     arena_y = (int16_t)pill_arena_origin_y();
   }
 
@@ -834,32 +836,33 @@ static void pill_rb_initialize_body(
   int16_t x = (int16_t)(
     ((int32_t)(column * 2 + 1) * arena_width) / 6
   );
+  int16_t screen_y = (int16_t)(22 + row * 38);
+  int16_t local_y = (int16_t)(screen_y - arena_y);
   const int16_t extent =
       radius + half_length + PILL_PHYSICS_EDGE_MARGIN;
 
   /*
-   * Spawn complete rows above the display. Later rows start progressively
-   * higher so the pills naturally rain in instead of appearing on-screen.
+   * Original Nasu behaviour: pills already lie inside the display when the
+   * alert opens. From the first physics tick onward they react normally to
+   * the current watch orientation.
    */
-  const int16_t screen_y = (int16_t)(
-    -extent -
-    4 -
-    row * PILL_RB_ENTRY_ROW_GAP_PX
-  );
-  const int16_t local_y =
-      (int16_t)(screen_y - arena_y);
-
   if (x < extent) {
     x = extent;
   } else if (x > arena_width - extent) {
     x = arena_width - extent;
   }
 
+  if (screen_y < extent) {
+    local_y = extent - arena_y;
+  } else if (screen_y > arena_height - extent) {
+    local_y = arena_height - extent - arena_y;
+  }
+
   *body = (PillPhysicsBody) {
     .x_q8 = (int32_t)x * PILL_PHYSICS_Q8,
     .y_q8 = (int32_t)local_y * PILL_PHYSICS_Q8,
     .vx_q8 = 0,
-    .vy_q8 = PILL_RB_ENTRY_MIN_SPEED_Q8,
+    .vy_q8 = 0,
     .angle =
         ((int32_t)(body_index * 5u + 1u) *
          TRIG_MAX_ANGLE) /
@@ -868,7 +871,7 @@ static void pill_rb_initialize_body(
     .medication_index = medication_index,
     .collision_radius = radius,
     .collision_half_length = half_length,
-    .entered_arena = false,
+    .entered_arena = true,
     .mass_q8 = pill_rb_mass_from_size_q8(size),
     .surface_friction_q8 =
         pill_rb_surface_friction_for_body_q8(

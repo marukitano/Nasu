@@ -43,6 +43,7 @@ typedef enum {
 
 static ResHandle s_confirmation_nasu_resource;
 static ResHandle s_confirmation_ok_resource;
+static ResHandle s_confirmed_vespa_resource;
 static bool s_confirmation_image_active;
 static bool s_confirmation_image_error_logged;
 static uint8_t
@@ -177,7 +178,6 @@ static bool draw_streamed_confirmation_image_to_framebuffer(
     bool clip_to_confirm_radius
 ) {
   if (
-    !s_confirmation_image_active ||
     !framebuffer_data ||
     framebuffer_stride < CONFIRM_IMAGE_WIDTH ||
     !resource
@@ -749,7 +749,7 @@ void draw_confirmed_page(
 ) {
   graphics_context_set_fill_color(
     ctx,
-    GColorGreen
+    theme_background_color()
   );
   graphics_fill_rect(
     ctx,
@@ -758,9 +758,78 @@ void draw_confirmed_page(
     GCornerNone
   );
 
-  draw_static_checkmark(
+  if (!s_confirmed_vespa_resource) {
+    s_confirmed_vespa_resource =
+        resource_get_handle(
+          RESOURCE_ID_RAW_CONFIRMED_VESPA
+        );
+  }
+
+  if (!s_confirmed_vespa_resource) {
+    log_confirmation_image_render_error(
+      "Confirmed Vespa RAW resource missing"
+    );
+    return;
+  }
+
+  if (
+    resource_size(s_confirmed_vespa_resource) !=
+        CONFIRM_IMAGE_WIDTH *
+        CONFIRM_IMAGE_HEIGHT
+  ) {
+    log_confirmation_image_render_error(
+      "Confirmed Vespa RAW resource has wrong size"
+    );
+    return;
+  }
+
+  GBitmap *framebuffer =
+      graphics_capture_frame_buffer(ctx);
+
+  if (!framebuffer) {
+    log_confirmation_image_render_error(
+      "Could not capture framebuffer for Vespa"
+    );
+    return;
+  }
+
+  bool framebuffer_ok =
+      gbitmap_get_format(framebuffer) ==
+          GBitmapFormat8Bit;
+
+  uint8_t *framebuffer_data = NULL;
+  int framebuffer_stride = 0;
+
+  if (framebuffer_ok) {
+    framebuffer_data =
+        gbitmap_get_data(framebuffer);
+    framebuffer_stride =
+        gbitmap_get_bytes_per_row(framebuffer);
+
+    framebuffer_ok =
+        framebuffer_data &&
+        framebuffer_stride >=
+            CONFIRM_IMAGE_WIDTH;
+  }
+
+  if (framebuffer_ok) {
+    draw_streamed_confirmation_image_to_framebuffer(
+      framebuffer_data,
+      framebuffer_stride,
+      GRect(0, 0, CONFIRM_IMAGE_WIDTH, CONFIRM_IMAGE_HEIGHT),
+      s_confirmed_vespa_resource,
+      bounds.origin.y,
+      false
+    );
+  } else {
+    log_confirmation_image_render_error(
+      "Confirmed Vespa framebuffer unavailable"
+    );
+  }
+
+  graphics_release_frame_buffer(
     ctx,
-    bounds
+    framebuffer
   );
 }
 
@@ -1262,29 +1331,19 @@ void confirmation_update_proc(
       }
     }
 
-    if (framebuffer_ok) {
+    if (
+      framebuffer_ok &&
+      s_confirmation_ok_state !=
+          CONFIRM_OK_HIDDEN
+    ) {
       draw_streamed_confirmation_image_to_framebuffer(
         framebuffer_data,
         framebuffer_stride,
         bounds,
-        s_confirmation_nasu_resource,
-        0,
-        true
+        s_confirmation_ok_resource,
+        s_confirmation_ok_offset_y,
+        false
       );
-
-      if (
-        s_confirmation_ok_state !=
-            CONFIRM_OK_HIDDEN
-      ) {
-        draw_streamed_confirmation_image_to_framebuffer(
-          framebuffer_data,
-          framebuffer_stride,
-          bounds,
-          s_confirmation_ok_resource,
-          s_confirmation_ok_offset_y,
-          false
-        );
-      }
     }
 
     graphics_release_frame_buffer(
@@ -1369,7 +1428,6 @@ static void update_confirmation_circle(void) {
     if (s_confirmation_image_active) {
       s_check_size = 0;
       s_check_state = CHECK_HIDDEN;
-      start_confirmation_ok_bounce_in();
       vibes_enqueue_custom_pattern(
         s_impact_vibration_pattern
       );
@@ -1573,6 +1631,10 @@ void select_button_down(
 
   prepare_confirmation_image();
 
+  if (s_confirmation_image_active) {
+    start_confirmation_ok_bounce_in();
+  }
+
   s_confirmation_symbol = symbol;
   s_confirmation_symbol_set = true;
   s_confirmation_state = CONFIRM_GROWING;
@@ -1775,16 +1837,7 @@ void select_button_up(
 
   if (s_confirmation_state == CONFIRM_COMPLETE) {
     if (s_confirmation_image_active) {
-      s_confirmation_release_pending = true;
-
-      if (
-        s_confirmation_ok_state ==
-            CONFIRM_OK_VISIBLE
-      ) {
-        start_confirmation_ok_bounce_down();
-      }
-
-      schedule_confirmation_timer();
+      exit_app();
       return;
     }
 

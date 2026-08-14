@@ -73,6 +73,11 @@
         },
         {
           "type": "raw",
+          "name": "RAW_CONFIRMED_VESPA",
+          "file": "images/Nasu_on_Vespa.raw"
+        },
+        {
+          "type": "raw",
           "name": "ALARM_PCM",
           "file": "sounds/alarm.pcm"
         }

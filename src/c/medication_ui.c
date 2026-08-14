@@ -442,10 +442,8 @@ static void canvas_update_proc(
         scroll_offset_y;
 
     /*
-     * Beim Overscroll nach unten liegt oberhalb der eigentlichen
-     * Haken-Seite ein kurzer freigelegter Bereich. Dieser muss zur
-     * Seite gehören und deshalb ebenfalls grün sein; sonst blitzt dort
-     * der normale Theme-Hintergrund durch.
+     * Beim Overscroll nach unten liegt oberhalb der Vespa-Seite ein kurzer
+     * freigelegter Bereich. Dort bleibt jetzt der normale Theme-Hintergrund.
      */
     if (confirmed_page_top > bounds.origin.y) {
       const int16_t overscroll_height = (int16_t)(
@@ -454,7 +452,10 @@ static void canvas_update_proc(
             : confirmed_page_top - bounds.origin.y
       );
 
-      graphics_context_set_fill_color(ctx, GColorGreen);
+      graphics_context_set_fill_color(
+        ctx,
+        theme_background_color()
+      );
       graphics_fill_rect(
         ctx,
         GRect(
@@ -468,7 +469,7 @@ static void canvas_update_proc(
       );
     }
 
-    /* Do not render the green page once it is completely off-screen. */
+    /* Do not render the Vespa page once it is completely off-screen. */
     if (
       confirmed_page_top < bounds.size.h &&
       confirmed_page_top + bounds.size.h > 0
