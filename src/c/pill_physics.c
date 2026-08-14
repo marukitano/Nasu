@@ -1790,7 +1790,6 @@ static void pill_physics_schedule_tick(uint32_t delay_ms) {
     !s_pill_physics_window_visible ||
     s_confirmed_screen_active ||
     s_transfer_screen_active ||
-    alarm_visuals_paused() ||
     s_pill_physics_body_count == 0
   ) {
     return;
@@ -1811,7 +1810,6 @@ static void pill_physics_tick(void *context) {
     !s_pill_physics_window_visible ||
     s_confirmed_screen_active ||
     s_transfer_screen_active ||
-    alarm_visuals_paused() ||
     s_pill_physics_body_count == 0
   ) {
     pill_physics_update_activity();
@@ -2151,7 +2149,6 @@ static void pill_physics_accel_handler(
   }
 
   if (
-    alarm_visuals_paused() ||
     s_confirmed_screen_active ||
     s_transfer_screen_active ||
     s_pill_physics_body_count == 0
@@ -2245,7 +2242,6 @@ void pill_physics_update_activity(void) {
       s_pill_physics_window_visible &&
       !s_confirmed_screen_active &&
       !s_transfer_screen_active &&
-      !alarm_visuals_paused() &&
       s_pill_physics_body_count > 0;
 
   const bool accel_should_run =

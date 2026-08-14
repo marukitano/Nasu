@@ -1379,11 +1379,7 @@ static void confirm_medication_group(
 
 static void finish_confirmed_release(void) {
   if (s_confirmation_image_active) {
-    if (unconfirmed_medication_group_is_due()) {
-      reset_confirmation_image();
-      refresh_app_screen_state();
-    }
-
+    exit_app();
     return;
   }
 
@@ -1837,7 +1833,16 @@ void select_button_up(
 
   if (s_confirmation_state == CONFIRM_COMPLETE) {
     if (s_confirmation_image_active) {
-      exit_app();
+      s_confirmation_release_pending = true;
+
+      if (
+        s_confirmation_ok_state ==
+            CONFIRM_OK_VISIBLE
+      ) {
+        start_confirmation_ok_bounce_down();
+      }
+
+      schedule_confirmation_timer();
       return;
     }
 
