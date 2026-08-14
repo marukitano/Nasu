@@ -1869,6 +1869,24 @@ static void pill_physics_tick(void *context) {
       &drive_y
     );
 
+    /*
+     * New pills enter from the top in screen coordinates regardless of how
+     * the watch is held. Horizontal wrist movement is still allowed.
+     *
+     * Vertically, the entry phase now accelerates like an almost maximally
+     * tilted watch. This keeps the intro deterministic while making the pills
+     * fall into view at the same lively speed as normal near-vertical physics.
+     */
+    if (!body->entered_arena) {
+      drive_y =
+          PILL_RB_MAX_TILT_MG -
+          PILL_RB_TILT_DEADZONE_MG;
+
+      if (body->vy_q8 < PILL_RB_ENTRY_MIN_SPEED_Q8) {
+        body->vy_q8 = PILL_RB_ENTRY_MIN_SPEED_Q8;
+      }
+    }
+
     body->vx_q8 +=
         drive_x / PILL_RB_ACCEL_DIVISOR;
     body->vy_q8 +=
@@ -1884,18 +1902,6 @@ static void pill_physics_tick(void *context) {
       -PILL_RB_MAX_LINEAR_Q8,
       PILL_RB_MAX_LINEAR_Q8
     );
-
-    /*
-     * Until a pill has fully crossed the top edge, guarantee a real downward
-     * entry. Horizontal wrist movement still affects it normally.
-     */
-    if (
-      !body->entered_arena &&
-      body->vy_q8 < PILL_RB_ENTRY_MIN_SPEED_Q8
-    ) {
-      body->vy_q8 =
-          PILL_RB_ENTRY_MIN_SPEED_Q8;
-    }
 
     body->angular_velocity = (int32_t)(
       ((int64_t)body->angular_velocity *
@@ -2141,8 +2147,6 @@ static void pill_physics_accel_handler(
     return;
   }
 
-  theme_shake_process_accel(&sample);
-
   if (
     alarm_visuals_paused() ||
     s_confirmed_screen_active ||
@@ -2242,13 +2246,7 @@ void pill_physics_update_activity(void) {
       s_pill_physics_body_count > 0;
 
   const bool accel_should_run =
-      s_pill_physics_window_visible &&
-      !s_transfer_screen_active &&
-      !alarm_visuals_paused() &&
-      (
-        physics_should_run ||
-        s_theme_mode == THEME_MODE_SHAKE
-      );
+      physics_should_run;
 
   if (!physics_should_run) {
     cancel_timer(&s_pill_physics_timer);

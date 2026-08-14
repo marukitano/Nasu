@@ -594,10 +594,6 @@ static bool persist_scalar_settings(void) {
     THEME_PERSIST_KEY,
     (int)s_theme_mode
   );
-  const int shake_state_written = persist_write_int(
-    THEME_SHAKE_STATE_PERSIST_KEY,
-    s_light_theme ? 1 : 0
-  );
   const int language_written = persist_write_int(
     LANGUAGE_PERSIST_KEY,
     (int)s_language
@@ -637,7 +633,6 @@ static bool persist_scalar_settings(void) {
 
   const bool verified =
       theme_written == (int)sizeof(int32_t) &&
-      shake_state_written == (int)sizeof(int32_t) &&
       language_written == (int)sizeof(int32_t) &&
       emblem_written == (int)sizeof(int32_t) &&
       pattern_written == (int)sizeof(int32_t) &&
@@ -647,8 +642,6 @@ static bool persist_scalar_settings(void) {
       interval_written == (int)sizeof(int32_t) &&
       persist_read_int(THEME_PERSIST_KEY) ==
           (int)s_theme_mode &&
-      persist_read_int(THEME_SHAKE_STATE_PERSIST_KEY) ==
-          (s_light_theme ? 1 : 0) &&
       persist_read_int(LANGUAGE_PERSIST_KEY) ==
           (int)s_language &&
       persist_read_int(SHOW_SWISS_EMBLEM_PERSIST_KEY) ==
@@ -1856,7 +1849,7 @@ static void settings_inbox_received(
       &theme_value
     ) ||
     theme_value < THEME_MODE_DARK ||
-    theme_value > THEME_MODE_SHAKE ||
+    theme_value > THEME_MODE_LIGHT ||
     !tuple_read_int32(
       language_tuple,
       &language_value
@@ -1980,26 +1973,15 @@ void watch_settings_init(void) {
 
   if (
     stored_theme < THEME_MODE_DARK ||
-    stored_theme > THEME_MODE_SHAKE
+    stored_theme > THEME_MODE_LIGHT
   ) {
     stored_theme = THEME_MODE_DARK;
   }
 
   s_theme_mode = (ThemeMode)stored_theme;
 
-  if (s_theme_mode == THEME_MODE_LIGHT) {
-    s_light_theme = true;
-  } else if (s_theme_mode == THEME_MODE_SHAKE) {
-    s_light_theme =
-        persist_exists(
-          THEME_SHAKE_STATE_PERSIST_KEY
-        ) &&
-        persist_read_int(
-          THEME_SHAKE_STATE_PERSIST_KEY
-        ) == 1;
-  } else {
-    s_light_theme = false;
-  }
+  s_light_theme =
+      s_theme_mode == THEME_MODE_LIGHT;
 
   if (persist_exists(LANGUAGE_PERSIST_KEY)) {
     const int stored_language = persist_read_int(

@@ -19,18 +19,7 @@ static bool scroll_input_allowed(void);
 
 static GBitmap *s_alert_pattern_dark_bitmap;
 static GBitmap *s_alert_pattern_light_bitmap;
-static time_t s_theme_shake_last_time;
-static AccelData s_theme_shake_previous_sample;
-static bool s_theme_shake_has_previous_sample;
-static uint8_t s_theme_shake_score;
-
-#define THEME_SHAKE_MEDIUM_DELTA_MG 550
-#define THEME_SHAKE_STRONG_DELTA_MG 900
-#define THEME_SHAKE_TRIGGER_SCORE 5
-#define THEME_SHAKE_MAX_SCORE 7
-
 static void apply_effective_theme(bool light_theme);
-static void reset_theme_shake_detector(void);
 static void draw_alert_background_pattern(
     GContext *ctx,
     GRect bounds
@@ -135,134 +124,29 @@ static void apply_effective_theme(bool light_theme) {
   }
 }
 
-static void reset_theme_shake_detector(void) {
-  s_theme_shake_has_previous_sample = false;
-  s_theme_shake_score = 0;
-}
-
-void theme_shake_process_accel(
-    const AccelData *sample
-) {
-  if (
-    !sample ||
-    sample->did_vibrate ||
-    s_theme_mode != THEME_MODE_SHAKE ||
-    !s_pill_physics_window_visible ||
-    s_transfer_screen_active ||
-    alarm_visuals_paused()
-  ) {
-    reset_theme_shake_detector();
-    return;
-  }
-
-  if (!s_theme_shake_has_previous_sample) {
-    s_theme_shake_previous_sample = *sample;
-    s_theme_shake_has_previous_sample = true;
-    return;
-  }
-
-  const int32_t delta =
-      abs_int32(
-        (int32_t)sample->x -
-        s_theme_shake_previous_sample.x
-      ) +
-      abs_int32(
-        (int32_t)sample->y -
-        s_theme_shake_previous_sample.y
-      ) +
-      abs_int32(
-        (int32_t)sample->z -
-        s_theme_shake_previous_sample.z
-      );
-
-  s_theme_shake_previous_sample = *sample;
-
-  if (delta >= THEME_SHAKE_STRONG_DELTA_MG) {
-    if (
-      s_theme_shake_score <=
-          THEME_SHAKE_MAX_SCORE - 2
-    ) {
-      s_theme_shake_score += 2;
-    } else {
-      s_theme_shake_score =
-          THEME_SHAKE_MAX_SCORE;
-    }
-  } else if (delta >= THEME_SHAKE_MEDIUM_DELTA_MG) {
-    if (
-      s_theme_shake_score <
-          THEME_SHAKE_MAX_SCORE
-    ) {
-      s_theme_shake_score++;
-    }
-  } else if (s_theme_shake_score > 0) {
-    s_theme_shake_score--;
-  }
-
-  if (
-    s_theme_shake_score <
-        THEME_SHAKE_TRIGGER_SCORE
-  ) {
-    return;
-  }
-
-  s_theme_shake_score = 0;
-
-  const time_t now = time(NULL);
-
-  if (
-    s_theme_shake_last_time != 0 &&
-    now - s_theme_shake_last_time <
-        THEME_SHAKE_COOLDOWN_SECONDS
-  ) {
-    return;
-  }
-
-  s_theme_shake_last_time = now;
-  apply_effective_theme(!s_light_theme);
-
-  persist_write_int(
-    THEME_SHAKE_STATE_PERSIST_KEY,
-    s_light_theme ? 1 : 0
-  );
-
-  APP_LOG(
-    APP_LOG_LEVEL_INFO,
-    "Theme changed by wrist shake"
-  );
-}
-
 void apply_theme_mode(
     ThemeMode mode,
     bool save
 ) {
   if (
-    mode > THEME_MODE_SHAKE
+    mode > THEME_MODE_LIGHT
   ) {
     mode = THEME_MODE_DARK;
   }
 
   s_theme_mode = mode;
 
-  if (mode == THEME_MODE_DARK) {
-    apply_effective_theme(false);
-  } else if (mode == THEME_MODE_LIGHT) {
-    apply_effective_theme(true);
-  } else {
-    apply_effective_theme(s_light_theme);
-  }
+  apply_effective_theme(
+    mode == THEME_MODE_LIGHT
+  );
 
   if (save) {
     persist_write_int(
       THEME_PERSIST_KEY,
       (int)s_theme_mode
     );
-    persist_write_int(
-      THEME_SHAKE_STATE_PERSIST_KEY,
-      s_light_theme ? 1 : 0
-    );
   }
 
-  reset_theme_shake_detector();
   pill_physics_update_activity();
 }
 
@@ -1187,7 +1071,6 @@ static void window_load(Window *window) {
 static void window_appear(Window *window) {
   (void)window;
   s_pill_physics_window_visible = true;
-  reset_theme_shake_detector();
 
   refresh_medication_rows_for_time();
 
@@ -1213,7 +1096,6 @@ static void window_appear(Window *window) {
 
 static void window_disappear(Window *window) {
   s_pill_physics_window_visible = false;
-  reset_theme_shake_detector();
   pill_physics_update_activity();
 
   cancel_timer(&s_ui_timer);
@@ -1305,7 +1187,6 @@ void medication_ui_init(void) {
 }
 
 void medication_ui_deinit(void) {
-  reset_theme_shake_detector();
   cancel_timer(&s_transfer_close_timer);
   cancel_timer(&s_transfer_animation_timer);
   cancel_timer(&s_ui_timer);

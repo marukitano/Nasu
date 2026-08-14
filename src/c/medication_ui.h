@@ -13,9 +13,6 @@ void apply_theme_mode(
     ThemeMode mode,
     bool save
 );
-void theme_shake_process_accel(
-    const AccelData *sample
-);
 int32_t pill_arena_origin_y(void);
 int32_t current_pill_y(void);
 void mark_scene_dirty(void);

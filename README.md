@@ -33,8 +33,7 @@ erledigt markiert wird.
 - Alarmton mit einstellbarer Lautstärke
 - Vibration ein/aus
 - Oberfläche auf **Deutsch und Englisch**
-- **Hell-, Dunkel- und Shake-Theme**
-- Wechsel zwischen Hell und Dunkel per Handgelenkbewegung im Shake-Modus
+- **Hell- und Dunkel-Theme**
 - Persistenter Erinnerungsstatus
 - Pebble-Wakeups
 
@@ -181,7 +180,7 @@ deliberate confirmation before marking it as taken.
 - Alarm sound with configurable volume
 - Vibration on/off
 - **German and English** interface
-- **Light, Dark and Shake** themes
+- **Light and Dark** themes
 - Persistent reminder state
 - Pebble wakeups
 

@@ -90,8 +90,7 @@ function currentTheme() {
 
   return (
     stored === 'light' ||
-    stored === 'dark' ||
-    stored === 'shake'
+    stored === 'dark'
   )
     ? stored
     : 'dark';
@@ -745,9 +744,7 @@ function sendAllSettings(
   commitSettings[SETTINGS_TRANSACTION_KEY] = transaction;
 
   commitSettings[THEME_KEY] =
-      theme === 'light'
-          ? 1
-          : (theme === 'shake' ? 2 : 0);
+      theme === 'light' ? 1 : 0;
   commitSettings[LANGUAGE_KEY] =
       language === 'en' ? 1 : 0;
   commitSettings[SHOW_SWISS_EMBLEM_KEY] =
@@ -840,8 +837,6 @@ function configurationPage(
       theme === 'light' ? ' selected' : '';
   var darkSelected =
       theme === 'dark' ? ' selected' : '';
-  var shakeSelected =
-      theme === 'shake' ? ' selected' : '';
   var germanSelected =
       language === 'de' ? ' selected' : '';
   var englishSelected =
@@ -1042,7 +1037,6 @@ function configurationPage(
     '<select id="theme" aria-label="Theme">',
     '<option value="light"' + lightSelected + '>Hell</option>',
     '<option value="dark"' + darkSelected + '>Dunkel</option>',
-    '<option value="shake"' + shakeSelected + '>Shake</option>',
     '</select>',
     '</label>',
     '<label>Sprache',
@@ -1584,8 +1578,7 @@ Pebble.addEventListener('webviewclosed', function(event) {
 
     if (
       settings.theme !== 'light' &&
-      settings.theme !== 'dark' &&
-      settings.theme !== 'shake'
+      settings.theme !== 'dark'
     ) {
       return;
     }
