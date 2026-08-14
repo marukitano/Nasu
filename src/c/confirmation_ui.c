@@ -1073,36 +1073,15 @@ void draw_taken_button_hint(
     GRect frame,
     GRect canvas_bounds
 ) {
-  if (!confirmation_prompt_is_active(NULL)) {
-    return;
-  }
-
-  const uint8_t phase =
-      s_taken_hint_phase < 0
-          ? 0
-          : (uint8_t)s_taken_hint_phase;
-
-  const int16_t radius =
-      TAKEN_HINT_MIN_RADIUS + s_hint_offsets[phase];
-
-  /* Der Mittelpunkt am Displayrand erzeugt den sichtbaren Halbkreis. */
-  const int16_t local_screen_edge_x =
-      canvas_bounds.size.w -
-      frame.origin.x;
-
-  graphics_context_set_fill_color(
-    ctx,
-    theme_background_color()
-  );
-
-  graphics_fill_circle(
-    ctx,
-    GPoint(
-      local_screen_edge_x,
-      layer_bounds.size.h / 2
-    ),
-    (uint16_t)radius
-  );
+  /*
+   * Der alte visuelle Mitteltasten-Hinweis in der Intake-/Alarm-Liste
+   * wird nicht mehr gezeichnet. Die Bestätigung selbst und ihre
+   * Eingabelogik bleiben unverändert.
+   */
+  (void)ctx;
+  (void)layer_bounds;
+  (void)frame;
+  (void)canvas_bounds;
 }
 
 static int16_t transfer_lerp_int16(
@@ -1848,6 +1827,8 @@ void select_button_down(
     return;
   }
 
+  medication_ui_pill_select_marker_press();
+
   prepare_confirmation_image();
 
   if (s_confirmation_image_active) {
@@ -2047,6 +2028,8 @@ void select_button_up(
     ClickRecognizerRef recognizer,
     void *context
 ) {
+  medication_ui_pill_select_marker_release();
+
   if (
     s_confirmed_screen_active &&
     !s_transfer_screen_active

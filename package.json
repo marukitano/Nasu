@@ -8,7 +8,7 @@
   ],
   "name": "nasu",
   "pebble": {
-    "displayName": "ナース",
+    "displayName": "Nasu",
     "enableMultiJS": false,
     "messageKeys": {
       "THEME": 0,

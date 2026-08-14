@@ -14,15 +14,33 @@
 #include "confirmation_ui.h"
 #include "medication_ui.h"
 
+#define PILL_SELECT_MARKER_WIDTH 5
+#define PILL_SELECT_MARKER_HEIGHT 52
+#define PILL_SELECT_MARKER_ANIM_MS 28
+#define PILL_SELECT_MARKER_PRESS_OFFSET 2
+#define PILL_SELECT_MARKER_PRESSED_WIDTH   (PILL_SELECT_MARKER_WIDTH + PILL_SELECT_MARKER_PRESS_OFFSET)
+
 static GColor theme_foreground_color(void);
 static bool scroll_input_allowed(void);
 
+static bool pill_select_marker_page_active(void);
+static void reset_pill_select_marker_animation(void);
+static void pill_select_marker_animation_tick(void *context);
+static void draw_pill_select_marker(
+    GContext *ctx,
+    GRect bounds
+);
 static GBitmap *s_alert_pattern_dark_bitmap;
 static GBitmap *s_alert_pattern_light_bitmap;
 static AppTimer *s_alarm_screen_timer;
 static bool s_refresh_after_vespa_scroll;
 static bool s_alarm_transitioning_to_pills;
 static bool s_alarm_navigation_locked;
+static AppTimer *s_pill_select_marker_anim_timer;
+static uint8_t s_pill_select_marker_draw_width =
+    PILL_SELECT_MARKER_WIDTH;
+static bool s_pill_select_marker_button_down;
+static bool s_pill_select_marker_peak_reached;
 static void apply_effective_theme(bool light_theme);
 static void draw_alert_background_pattern(
     GContext *ctx,
@@ -111,6 +129,211 @@ bool medication_ui_alarm_navigation_locked(void) {
   return
       s_alarm_navigation_locked &&
       s_alarm_active;
+}
+
+static bool pill_select_marker_page_active(void) {
+  if (
+    !s_canvas_layer ||
+    s_transfer_screen_active ||
+    s_confirmed_screen_active ||
+    medication_ui_alarm_transitioning_to_pills() ||
+    s_scroll.snap_index != 0 ||
+    s_scroll.mode != SCROLL_IDLE ||
+    visual_canvas_offset_y() !=
+        scroll_snap_anchor_y(0)
+  ) {
+    return false;
+  }
+
+  MedicationSymbol active_symbol;
+
+  if (
+    active_medication_symbol(&active_symbol) &&
+    active_symbol == MEDICATION_SYMBOL_PEN
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+static void reset_pill_select_marker_animation(void) {
+  cancel_timer(&s_pill_select_marker_anim_timer);
+
+  s_pill_select_marker_draw_width =
+      PILL_SELECT_MARKER_WIDTH;
+  s_pill_select_marker_button_down = false;
+  s_pill_select_marker_peak_reached = false;
+
+  if (s_canvas_layer) {
+    layer_mark_dirty(s_canvas_layer);
+  }
+}
+
+static void pill_select_marker_animation_tick(
+    void *context
+) {
+  (void)context;
+  s_pill_select_marker_anim_timer = NULL;
+
+  if (!pill_select_marker_page_active()) {
+    reset_pill_select_marker_animation();
+    return;
+  }
+
+  if (!s_pill_select_marker_peak_reached) {
+    if (
+      s_pill_select_marker_draw_width <
+          PILL_SELECT_MARKER_PRESSED_WIDTH
+    ) {
+      s_pill_select_marker_draw_width++;
+    }
+
+    if (
+      s_pill_select_marker_draw_width >=
+          PILL_SELECT_MARKER_PRESSED_WIDTH
+    ) {
+      s_pill_select_marker_draw_width =
+          PILL_SELECT_MARKER_PRESSED_WIDTH;
+      s_pill_select_marker_peak_reached = true;
+    }
+  } else if (
+    !s_pill_select_marker_button_down &&
+    s_pill_select_marker_draw_width >
+        PILL_SELECT_MARKER_WIDTH
+  ) {
+    s_pill_select_marker_draw_width--;
+  }
+
+  if (s_canvas_layer) {
+    layer_mark_dirty(s_canvas_layer);
+  }
+
+  const bool moving_in =
+      !s_pill_select_marker_peak_reached &&
+      s_pill_select_marker_draw_width <
+          PILL_SELECT_MARKER_PRESSED_WIDTH;
+
+  const bool moving_out =
+      s_pill_select_marker_peak_reached &&
+      !s_pill_select_marker_button_down &&
+      s_pill_select_marker_draw_width >
+          PILL_SELECT_MARKER_WIDTH;
+
+  if (moving_in || moving_out) {
+    s_pill_select_marker_anim_timer =
+        app_timer_register(
+          PILL_SELECT_MARKER_ANIM_MS,
+          pill_select_marker_animation_tick,
+          NULL
+        );
+
+    if (!s_pill_select_marker_anim_timer) {
+      reset_pill_select_marker_animation();
+    }
+  }
+}
+
+void medication_ui_pill_select_marker_press(void) {
+  if (
+    !pill_select_marker_page_active() ||
+    s_pill_select_marker_button_down ||
+    s_pill_select_marker_draw_width !=
+        PILL_SELECT_MARKER_WIDTH ||
+    s_pill_select_marker_anim_timer
+  ) {
+    return;
+  }
+
+  s_pill_select_marker_button_down = true;
+  s_pill_select_marker_peak_reached = false;
+
+  /*
+   * Wie in Swiss Chronograph: der erste Pixel kommt sofort,
+   * damit der Hardwaredruck ohne wahrnehmbare Verzögerung reagiert.
+   */
+  s_pill_select_marker_draw_width++;
+
+  if (s_canvas_layer) {
+    layer_mark_dirty(s_canvas_layer);
+  }
+
+  s_pill_select_marker_anim_timer =
+      app_timer_register(
+        PILL_SELECT_MARKER_ANIM_MS,
+        pill_select_marker_animation_tick,
+        NULL
+      );
+
+  if (!s_pill_select_marker_anim_timer) {
+    reset_pill_select_marker_animation();
+  }
+}
+
+void medication_ui_pill_select_marker_release(void) {
+  if (!s_pill_select_marker_button_down) {
+    return;
+  }
+
+  s_pill_select_marker_button_down = false;
+
+  /*
+   * Bei einem sehr kurzen Klick läuft die Bewegung zunächst noch
+   * vollständig bis 7 px und anschließend wieder auf 5 px zurück.
+   * Das entspricht der Swiss-Chronograph-Tastenanimation.
+   */
+  if (
+    s_pill_select_marker_peak_reached &&
+    s_pill_select_marker_draw_width >
+        PILL_SELECT_MARKER_WIDTH &&
+    !s_pill_select_marker_anim_timer
+  ) {
+    s_pill_select_marker_anim_timer =
+        app_timer_register(
+          PILL_SELECT_MARKER_ANIM_MS,
+          pill_select_marker_animation_tick,
+          NULL
+        );
+
+    if (!s_pill_select_marker_anim_timer) {
+      reset_pill_select_marker_animation();
+    }
+  }
+}
+
+static void draw_pill_select_marker(
+    GContext *ctx,
+    GRect bounds
+) {
+  if (!pill_select_marker_page_active()) {
+    return;
+  }
+
+  const int16_t marker_width =
+      s_pill_select_marker_draw_width;
+  const int16_t marker_y =
+      bounds.origin.y +
+      bounds.size.h / 2 -
+      PILL_SELECT_MARKER_HEIGHT / 2;
+
+  graphics_context_set_fill_color(
+    ctx,
+    GColorWhite
+  );
+
+  graphics_fill_rect(
+    ctx,
+    GRect(
+      bounds.origin.x +
+          bounds.size.w -
+          marker_width,
+      marker_y,
+      marker_width,
+      PILL_SELECT_MARKER_HEIGHT
+    ),
+    5,
+    GCornersLeft
+  );
 }
 
 void mark_scene_dirty(void) {
@@ -252,90 +475,9 @@ static void draw_swiss_emblem(
     GContext *ctx,
     int32_t scroll_offset_y
 ) {
-  if (!s_show_swiss_emblem) {
-    return;
-  }
-
-  static const char *EMBLEM_ROWS[SWISS_EMBLEM_HEIGHT] = {
-    "..RRRRRRRRR..",
-    ".RRRRWWWRRRR.",
-    ".RRRRWWWRRRR.",
-    ".RRRRWWWRRRR.",
-    ".RWWWWWWWWWR.",
-    ".RWWWWWWWWWR.",
-    ".RWWWWWWWWWR.",
-    ".RRRRWWWRRRR.",
-    ".RRRRWWWRRRR.",
-    "..RRRWWWRRR..",
-    "..RRRRRRRRR..",
-    "....RRRRR....",
-    ".....RRR.....",
-    "......R......"
-  };
-
-  const int16_t left =
-      SWISS_EMBLEM_PIVOT_X -
-      SWISS_EMBLEM_WIDTH / 2;
-  const int16_t top = (int16_t)(
-    SWISS_EMBLEM_PIVOT_Y -
-    SWISS_EMBLEM_HEIGHT / 2 +
-    scroll_offset_y
-  );
-
-  for (int16_t row = 0; row < SWISS_EMBLEM_HEIGHT; row++) {
-    int16_t run_start = -1;
-    char current_symbol = '.';
-
-    for (int16_t column = 0; column <= SWISS_EMBLEM_WIDTH; column++) {
-      const char symbol =
-          column < SWISS_EMBLEM_WIDTH
-              ? EMBLEM_ROWS[row][column]
-              : '.';
-      const bool drawable =
-          symbol == 'W' || symbol == 'R';
-
-      if (drawable && run_start < 0) {
-        run_start = column;
-        current_symbol = symbol;
-        continue;
-      }
-
-      if (
-        drawable &&
-        run_start >= 0 &&
-        symbol == current_symbol
-      ) {
-        continue;
-      }
-
-      if (run_start >= 0) {
-        graphics_context_set_fill_color(
-          ctx,
-          current_symbol == 'W'
-              ? GColorWhite
-              : GColorRed
-        );
-        graphics_fill_rect(
-          ctx,
-          GRect(
-            left + run_start,
-            top + row,
-            column - run_start,
-            1
-          ),
-          0,
-          GCornerNone
-        );
-        run_start = -1;
-        current_symbol = '.';
-      }
-
-      if (drawable) {
-        run_start = column;
-        current_symbol = symbol;
-      }
-    }
-  }
+  /* Schweizer Wappen aus der Pillensimulation entfernt. */
+  (void)ctx;
+  (void)scroll_offset_y;
 }
 
 static void destroy_pill_bitmaps(void) {
@@ -634,6 +776,11 @@ static void canvas_update_proc(
       theme_background_color()
     );
   }
+
+  draw_pill_select_marker(
+    ctx,
+    bounds
+  );
 }
 
 static void band_arrow_update_proc(
@@ -1049,6 +1196,8 @@ static bool load_pill_sheet(void) {
 }
 
 static void reset_ui_state(GRect bounds) {
+  reset_pill_select_marker_animation();
+
   s_animation_tick = 0;
   s_medication_marquee_tick = 0;
   s_medication_marquee_row = -1;

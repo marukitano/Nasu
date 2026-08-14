@@ -2222,8 +2222,13 @@ void draw_intake_medications(
     char label[MEDICATION_LABEL_LENGTH];
 
     if (medication->quantity > 1) {
-      snprintf(label, sizeof(label), "%s x%u",
-               medication->name, (unsigned int)medication->quantity);
+      snprintf(
+        label,
+        sizeof(label),
+        "%u x %s",
+        (unsigned int)medication->quantity,
+        medication->name
+      );
     } else {
       snprintf(label, sizeof(label), "%s", medication->name);
     }
@@ -2386,7 +2391,7 @@ void draw_medications(
 
     draw_medication_name(
       ctx,
-      s_rows[index],
+      medication->name,
       name_frame,
       index
     );

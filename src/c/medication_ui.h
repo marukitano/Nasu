@@ -20,6 +20,8 @@ void refresh_app_screen_state(void);
 void medication_ui_begin_alarm_sequence(void);
 void medication_ui_return_to_vespa_after_confirmation(void);
 void medication_ui_scroll_settled(void);
+void medication_ui_pill_select_marker_press(void);
+void medication_ui_pill_select_marker_release(void);
 bool medication_ui_alarm_transitioning_to_pills(void);
 bool medication_ui_alarm_navigation_locked(void);
 GColor theme_background_color(void);
