@@ -15,6 +15,8 @@
 #include "medication_ui.h"
 
 static int16_t scroll_canvas_height(void);
+static int scroll_min_snap_index(void);
+static int scroll_max_snap_index(void);
 static int32_t snap_anchor_for_index(int index);
 static int clamp_snap_index(int index);
 static void band_animation_tick(
@@ -65,31 +67,94 @@ static int16_t scroll_canvas_height(void) {
   if (!s_canvas_layer) {
     return 228;
   }
-
   return layer_get_bounds(s_canvas_layer).size.h;
 }
 
-static int32_t snap_anchor_for_index(int index) {
+static int scroll_min_snap_index(void) {
+  return INTAKE_ROW_COUNT > 0 ? 0 : scroll_vespa_snap_index();
+}
+
+static int scroll_max_snap_index(void) {
+  if (medication_ui_alarm_navigation_locked()) {
+    /*
+     * Alarmzustand: Pillenanimation -> Intake und dann Schluss.
+     * Vespa sowie die komplette Medikamentenliste liegen außerhalb des
+     * erlaubten Scrollbereichs.
+     */
+    return INTAKE_ROW_COUNT;
+  }
+
+  return scroll_vespa_snap_index() + LIST_ROW_COUNT;
+}
+
+int scroll_intake_first_snap_index(void) {
+  return INTAKE_ROW_COUNT > 0 ? 1 : -1;
+}
+
+int scroll_vespa_snap_index(void) {
+  return INTAKE_ROW_COUNT + 1;
+}
+
+int scroll_all_medications_first_snap_index(void) {
+  return scroll_vespa_snap_index() + 1;
+}
+
+int scroll_all_medication_row_for_snap(int snap_index) {
+  const int row = snap_index - scroll_all_medications_first_snap_index();
+  return row >= 0 && row < LIST_ROW_COUNT ? row : -1;
+}
+
+int32_t scroll_vespa_page_top_y(void) {
+  const int32_t height = scroll_canvas_height();
+  if (INTAKE_ROW_COUNT <= 0) {
+    return height;
+  }
+  return 2 * height +
+      (INTAKE_ROW_COUNT - 1) *
+      (MEDICATION_ROW_HEIGHT + MEDICATION_ROW_GAP);
+}
+
+int32_t scroll_all_medications_page_start_y(void) {
+  return scroll_vespa_page_top_y() + scroll_canvas_height();
+}
+
+static int clamp_snap_index(int index) {
+  const int minimum = scroll_min_snap_index();
+  const int maximum = scroll_max_snap_index();
+  if (index < minimum) return minimum;
+  if (index > maximum) return maximum;
+  return index;
+}
+
+int32_t scroll_snap_anchor_y(int snap_index) {
+  const int index = clamp_snap_index(snap_index);
+  const int32_t height = scroll_canvas_height();
+
   if (index <= 0) {
     return CANVAS_START_OFFSET_Y;
   }
 
-  return MEDICATION_PAGE_SNAP_OFFSET(
-    scroll_canvas_height(),
-    index - 1
-  );
+  if (index <= INTAKE_ROW_COUNT) {
+    return -height -
+        (index - 1) *
+        (MEDICATION_ROW_HEIGHT + MEDICATION_ROW_GAP);
+  }
+
+  if (index == scroll_vespa_snap_index()) {
+    return -scroll_vespa_page_top_y();
+  }
+
+  const int row = scroll_all_medication_row_for_snap(index);
+  if (row >= 0) {
+    return -scroll_all_medications_page_start_y() -
+        row * (MEDICATION_ROW_HEIGHT + MEDICATION_ROW_GAP);
+  }
+
+  return -scroll_vespa_page_top_y();
 }
 
-static int clamp_snap_index(int index) {
-  if (index < 0) {
-    return 0;
-  }
-
-  if (index > LIST_ROW_COUNT) {
-    return LIST_ROW_COUNT;
-  }
-
-  return index;
+static int32_t snap_anchor_for_index(int index) {
+  return scroll_snap_anchor_y(index);
 }
 
 int32_t visual_canvas_offset_y(void) {
@@ -113,66 +178,21 @@ void set_band_layer_x_q8(
     return;
   }
 
-  GRect frame =
-      layer_get_frame(
-        s_band_layer
-      );
-
+  GRect frame = layer_get_frame(s_band_layer);
   const int32_t rounded_x =
-      x_q8 >= 0
-          ? x_q8 + SCROLL_Q8 / 2
-          : x_q8 - SCROLL_Q8 / 2;
+      x_q8 >= 0 ? x_q8 + SCROLL_Q8 / 2 : x_q8 - SCROLL_Q8 / 2;
+  frame.origin.x = (int16_t)(rounded_x / SCROLL_Q8);
 
-  frame.origin.x =
-      (int16_t)(
-        rounded_x /
-        SCROLL_Q8
-      );
-
-  const GRect canvas_bounds =
-      layer_get_bounds(s_canvas_layer);
-
-  /* Beim Ausfahren bleibt der Balken an der ersten Zeile. */
-  if (!s_band.target_visible) {
-    frame.origin.y =
-        (int16_t)(
-          MEDICATION_PAGE_ROW_TOP(
-            canvas_bounds.size.h,
-            0
-          ) +
-          visual_canvas_offset_y()
-        );
-  } else {
-    frame.origin.y =
-        (
-          canvas_bounds.size.h -
-          MEDICATION_ROW_HEIGHT
-        ) /
-        2;
-  }
-
-  layer_set_frame(
-    s_band_layer,
-    frame
-  );
+  const GRect canvas_bounds = layer_get_bounds(s_canvas_layer);
+  frame.origin.y =
+      (canvas_bounds.size.h - MEDICATION_ROW_HEIGHT) / 2;
+  layer_set_frame(s_band_layer, frame);
 
   if (s_band_arrow_layer) {
-    GRect arrow_frame =
-        layer_get_frame(
-          s_band_arrow_layer
-        );
-
-    arrow_frame.origin.x =
-        frame.origin.x -
-        BAND_ARROW_WIDTH;
-
-    arrow_frame.origin.y =
-        frame.origin.y;
-
-    layer_set_frame(
-      s_band_arrow_layer,
-      arrow_frame
-    );
+    GRect arrow_frame = layer_get_frame(s_band_arrow_layer);
+    arrow_frame.origin.x = frame.origin.x - BAND_ARROW_WIDTH;
+    arrow_frame.origin.y = frame.origin.y;
+    layer_set_frame(s_band_arrow_layer, arrow_frame);
   }
 }
 
@@ -311,41 +331,50 @@ void update_band_animation_target(void) {
     return;
   }
 
+  const int snap = s_scroll.snap_index;
+  const bool row_snap =
+      (snap >= 1 && snap <= INTAKE_ROW_COUNT) ||
+      scroll_all_medication_row_for_snap(snap) >= 0;
+
   /*
-   * Das Band darf erst starten, wenn die erste
-   * Medikamentenzeile ihre tatsächliche Snap-Position
-   * erreicht hat. Der Zielindex wird bereits zu Beginn
-   * einer Scrollfahrt gesetzt und wäre deshalb zu früh.
-   *
-   * Beim Zurückscrollen zur Pillenseite genügt bereits
-   * ein sichtbarer Pixel oberhalb des ersten Snap-Punkts,
-   * damit Band und Pfeil wieder nach rechts ausfahren.
+   * Wie im bisherigen Quickscroll: das Seitenband fährt erst herein, wenn
+   * die vertikale Feder wirklich am Rastpunkt angekommen ist. Während der
+   * Fahrt Vespa -> Intake bleibt der Bildschirm deshalb sauber.
+   */
+  const bool row_is_settled =
+      s_scroll.mode == SCROLL_IDLE &&
+      abs_int32(
+        s_scroll.position_q8 -
+        scroll_anchor_q8(snap)
+      ) <= SCROLL_STOP_POSITION_Q8;
+
+  /*
+   * Beim Eintritt in eine Liste bleibt das Band bis zum Einrasten
+   * draußen und bounced dann herein. Ist es aber bereits sichtbar und
+   * wir wechseln nur von einer Listenzeile zur nächsten, bleibt es
+   * einfach stehen. Dadurch gibt es keinen unnötigen Out/In-Bounce bei
+   * jedem einzelnen Medikament.
    */
   const bool visible =
-      LIST_ROW_COUNT > 0 &&
-      visual_canvas_offset_y() <=
-          snap_anchor_for_index(1);
+      row_snap &&
+      (
+        s_band.target_visible ||
+        row_is_settled
+      );
 
   const int32_t target_x_q8 =
-      visible
-          ? 0
-          : layer_get_bounds(s_canvas_layer).size.w * SCROLL_Q8;
+      visible ? 0 :
+      layer_get_bounds(s_canvas_layer).size.w * SCROLL_Q8;
 
-  if (
-    s_band.target_visible == visible &&
-    s_band.target_x_q8 == target_x_q8
-  ) {
+  if (s_band.target_visible == visible &&
+      s_band.target_x_q8 == target_x_q8) {
     return;
   }
 
   s_band.target_visible = visible;
   s_band.target_x_q8 = target_x_q8;
   s_band.animating = true;
-
-  if (visible) {
-    set_band_and_arrow_hidden(false);
-  }
-
+  if (visible) set_band_and_arrow_hidden(false);
   schedule_band_animation();
 }
 
@@ -359,14 +388,14 @@ static int32_t scroll_anchor_q8(int index) {
 
 static int32_t scroll_top_limit_q8(void) {
   return
-      scroll_anchor_q8(0) +
+      scroll_anchor_q8(scroll_min_snap_index()) +
       SCROLL_EDGE_HALF_INTERVAL_PX *
       SCROLL_Q8;
 }
 
 static int32_t scroll_bottom_limit_q8(void) {
   return
-      scroll_anchor_q8(LIST_ROW_COUNT) -
+      scroll_anchor_q8(scroll_max_snap_index()) -
       SCROLL_EDGE_HALF_INTERVAL_PX *
       SCROLL_Q8;
 }
@@ -389,14 +418,14 @@ static int nearest_snap_index_for_position_q8(
 
   if (
     position_q8 >= anchor_q8 + escape_q8 &&
-    current > 0
+    current > scroll_min_snap_index()
   ) {
     return current - 1;
   }
 
   if (
     position_q8 <= anchor_q8 - escape_q8 &&
-    current < LIST_ROW_COUNT
+    current < scroll_max_snap_index()
   ) {
     return current + 1;
   }
@@ -497,11 +526,13 @@ static int32_t magnet_force_for_position_q8(
     int32_t position_q8
 ) {
   const int32_t top_anchor_q8 =
-      scroll_anchor_q8(0);
+      scroll_anchor_q8(
+        scroll_min_snap_index()
+      );
 
   const int32_t bottom_anchor_q8 =
       scroll_anchor_q8(
-        LIST_ROW_COUNT
+        scroll_max_snap_index()
       );
 
   if (position_q8 >= top_anchor_q8) {
@@ -519,8 +550,8 @@ static int32_t magnet_force_for_position_q8(
   }
 
   for (
-    int index = 0;
-    index < LIST_ROW_COUNT;
+    int index = scroll_min_snap_index();
+    index < scroll_max_snap_index();
     index++
   ) {
     const int32_t upper_anchor_q8 =
@@ -581,7 +612,7 @@ static bool edge_bounce_reached_limit(void) {
     return false;
   }
 
-  return s_scroll.snap_index == 0
+  return s_scroll.snap_index == scroll_min_snap_index()
       ? s_scroll.position_q8 >= scroll_top_limit_q8()
       : s_scroll.position_q8 <= scroll_bottom_limit_q8();
 }
@@ -599,7 +630,7 @@ static bool touch_reached_virtual_edge(void) {
   }
 
   if (
-    s_touch.start_index == 0 &&
+    s_touch.start_index == scroll_min_snap_index() &&
     s_touch.pair_direction < 0
   ) {
     return
@@ -609,7 +640,7 @@ static bool touch_reached_virtual_edge(void) {
 
   if (
     s_touch.start_index ==
-        LIST_ROW_COUNT &&
+        scroll_max_snap_index() &&
     s_touch.pair_direction > 0
   ) {
     return
@@ -789,6 +820,7 @@ static void scroll_physics_tick(void *context) {
 
     s_scroll.velocity_q8 = 0;
     s_scroll.mode = SCROLL_IDLE;
+    medication_ui_scroll_settled();
   }
 
   mark_scene_dirty();
@@ -818,6 +850,7 @@ static void schedule_scroll_physics(void) {
 
     s_scroll.velocity_q8 = 0;
     s_scroll.mode = SCROLL_IDLE;
+    medication_ui_scroll_settled();
     mark_scene_dirty();
   }
 }
@@ -854,10 +887,15 @@ static void start_scroll_snap(
   ) {
     s_scroll.velocity_q8 = 0;
     s_scroll.mode = SCROLL_IDLE;
+    medication_ui_scroll_settled();
     return;
   }
 
   schedule_scroll_physics();
+}
+
+void scroll_to_snap_index(int target_index) {
+  start_scroll_snap(target_index, false);
 }
 
 static void start_edge_bounce(int direction) {
@@ -890,12 +928,13 @@ bool step_snap_index(int direction) {
   if (next_index == s_scroll.snap_index) {
     const bool valid_edge =
         (
-          s_scroll.snap_index == 0 &&
+          s_scroll.snap_index ==
+              scroll_min_snap_index() &&
           direction < 0
         ) ||
         (
           s_scroll.snap_index ==
-              LIST_ROW_COUNT &&
+              scroll_max_snap_index() &&
           direction > 0
         );
 
@@ -918,6 +957,7 @@ bool step_snap_index(int direction) {
 static void touch_begin(const TouchEvent *event) {
   if (
     s_transfer_screen_active ||
+    medication_ui_alarm_transitioning_to_pills() ||
     s_confirmation_state != CONFIRM_IDLE
   ) {
     return;

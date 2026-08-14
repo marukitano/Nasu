@@ -244,12 +244,13 @@ void rebuild_medication_rows(void) {
 
   s_visible_medication_time = visible_time;
   s_visible_medication_time_set = true;
-  s_list_row_count = 0;
+  s_intake_row_count = 0;
+  s_intake_symbol_set = false;
 
   memset(
-    s_row_medication_indices,
+    s_intake_medication_indices,
     -1,
-    sizeof(s_row_medication_indices)
+    sizeof(s_intake_medication_indices)
   );
 
   MedicationSymbol symbol;
@@ -258,9 +259,13 @@ void rebuild_medication_rows(void) {
     return;
   }
 
+  s_intake_symbol = symbol;
+  s_intake_symbol_set = true;
+
   for (
     uint8_t index = 0;
-    index < s_medication_count;
+    index < s_medication_count &&
+    s_intake_row_count < MAX_LIST_ROWS;
     index++
   ) {
     if (
@@ -273,22 +278,10 @@ void rebuild_medication_rows(void) {
       continue;
     }
 
-    format_medication_label(
-      &s_medications[index],
-      s_row_labels[s_list_row_count],
-      sizeof(s_row_labels[s_list_row_count])
-    );
-
-    s_rows[s_list_row_count] =
-        s_row_labels[s_list_row_count];
-
-    s_row_kinds[s_list_row_count] =
-        MEDICATION_ROW_ITEM;
-
-    s_row_medication_indices[s_list_row_count] =
-        (int8_t)index;
-
-    s_list_row_count++;
+    s_intake_medication_indices[
+      s_intake_row_count
+    ] = (int8_t)index;
+    s_intake_row_count++;
   }
 }
 

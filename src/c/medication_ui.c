@@ -19,6 +19,10 @@ static bool scroll_input_allowed(void);
 
 static GBitmap *s_alert_pattern_dark_bitmap;
 static GBitmap *s_alert_pattern_light_bitmap;
+static AppTimer *s_alarm_screen_timer;
+static bool s_refresh_after_vespa_scroll;
+static bool s_alarm_transitioning_to_pills;
+static bool s_alarm_navigation_locked;
 static void apply_effective_theme(bool light_theme);
 static void draw_alert_background_pattern(
     GContext *ctx,
@@ -54,6 +58,9 @@ static void sync_medication_marquee(
 );
 static void ui_timer_callback(void *context);
 static void start_ui_timer(void);
+static void alarm_screen_timer_handler(
+    void *context
+);
 static void scroll_up_handler(
     ClickRecognizerRef recognizer,
     void *context
@@ -85,7 +92,20 @@ static GColor theme_foreground_color(void) {
 static bool scroll_input_allowed(void) {
   return
       !s_transfer_screen_active &&
+      !medication_ui_alarm_transitioning_to_pills() &&
       s_confirmation_state == CONFIRM_IDLE;
+}
+
+bool medication_ui_alarm_transitioning_to_pills(void) {
+  return
+      s_alarm_transitioning_to_pills &&
+      s_alarm_active;
+}
+
+bool medication_ui_alarm_navigation_locked(void) {
+  return
+      s_alarm_navigation_locked &&
+      s_alarm_active;
 }
 
 void mark_scene_dirty(void) {
@@ -425,66 +445,90 @@ static void canvas_update_proc(
     GContext *ctx
 ) {
   const GRect bounds = layer_get_bounds(layer);
-  const int32_t scroll_offset_y =
-      visual_canvas_offset_y();
+  const int32_t scroll_offset_y = visual_canvas_offset_y();
+  const bool alarm_transitioning =
+      medication_ui_alarm_transitioning_to_pills();
+  const bool alarm_locked =
+      medication_ui_alarm_navigation_locked();
 
-  graphics_context_set_fill_color(
-    ctx,
-    theme_background_color()
-  );
+  graphics_context_set_fill_color(ctx, theme_background_color());
   graphics_fill_rect(ctx, bounds, 0, GCornerNone);
 
   draw_alert_background_pattern(ctx, bounds);
 
-  if (s_confirmed_screen_active) {
-    const int32_t confirmed_page_top =
-        bounds.origin.y +
-        scroll_offset_y;
+  if (!s_confirmed_screen_active && s_sheet) {
+    const int32_t pill_y = current_pill_y();
+    MedicationSymbol active_symbol;
+    const bool pen_alert_active =
+        active_medication_symbol(&active_symbol) &&
+        active_symbol == MEDICATION_SYMBOL_PEN;
 
-    /*
-     * Beim Overscroll nach unten liegt oberhalb der Vespa-Seite ein kurzer
-     * freigelegter Bereich. Dort bleibt jetzt der normale Theme-Hintergrund.
-     */
-    if (confirmed_page_top > bounds.origin.y) {
-      const int16_t overscroll_height = (int16_t)(
-        confirmed_page_top - bounds.origin.y > bounds.size.h
-            ? bounds.size.h
-            : confirmed_page_top - bounds.origin.y
-      );
-
-      graphics_context_set_fill_color(
+    if (pen_alert_active) {
+      draw_pen_alert_animation(
         ctx,
-        theme_background_color()
+        bounds,
+        scroll_offset_y,
+        (uint8_t)(s_animation_tick / PILL_TICKS_PER_FRAME),
+        theme_foreground_color()
       );
-      graphics_fill_rect(
-        ctx,
-        GRect(
-          bounds.origin.x,
-          bounds.origin.y,
-          bounds.size.w,
-          overscroll_height
-        ),
-        0,
-        GCornerNone
-      );
+    } else {
+      draw_physics_pills(ctx, bounds, pill_y);
     }
 
-    /* Do not render the Vespa page once it is completely off-screen. */
-    if (
-      confirmed_page_top < bounds.size.h &&
-      confirmed_page_top + bounds.size.h > 0
-    ) {
-      draw_confirmed_page(
-        ctx,
-        GRect(
-          bounds.origin.x,
-          (int16_t)confirmed_page_top,
-          bounds.size.w,
-          bounds.size.h
-        )
-      );
-    }
+    draw_swiss_emblem(ctx, scroll_offset_y);
+  }
 
+  cover_scrolled_alert_area(ctx, bounds);
+
+  /*
+   * Während Vespa -> Pillenanimation darf die Intake-Liste nicht zwischen
+   * beiden Seiten auftauchen. Erst wenn die Pillenseite eingerastet ist,
+   * wird sie direkt darunter freigegeben.
+   */
+  if (!alarm_transitioning) {
+    draw_intake_medications(
+      ctx,
+      bounds,
+      scroll_offset_y,
+      theme_foreground_color(),
+      theme_background_color()
+    );
+  }
+
+  /*
+   * Im 3-Sekunden-Intro liegt die Vespa temporär exakt eine Bildschirmhöhe
+   * unter der Pillenanimation. So fährt die automatische Bewegung nur eine
+   * Seite hoch und es gibt weder Intake-Liste noch eine leere Zwischenpage.
+   */
+  const int32_t vespa_content_top =
+      alarm_transitioning
+          ? bounds.size.h
+          : scroll_vespa_page_top_y();
+
+  const int32_t vespa_top =
+      vespa_content_top + scroll_offset_y;
+
+  if (
+    !alarm_locked &&
+    vespa_top < bounds.size.h &&
+    vespa_top + bounds.size.h > 0
+  ) {
+    draw_confirmed_page(
+      ctx,
+      GRect(
+        bounds.origin.x,
+        (int16_t)vespa_top,
+        bounds.size.w,
+        bounds.size.h
+      )
+    );
+  }
+
+  /*
+   * Solange der Alarm aktiv verriegelt ist, endet die Navigation nach den
+   * fälligen Medikamenten. Vespa und Gesamtliste sind dann nicht erreichbar.
+   */
+  if (!alarm_locked) {
     draw_medications(
       ctx,
       bounds,
@@ -492,48 +536,7 @@ static void canvas_update_proc(
       theme_foreground_color(),
       theme_background_color()
     );
-    return;
   }
-
-  if (!s_sheet) {
-    return;
-  }
-
-  const int32_t pill_y = current_pill_y();
-  MedicationSymbol active_symbol;
-  const bool pen_alert_active =
-      active_medication_symbol(&active_symbol) &&
-      active_symbol == MEDICATION_SYMBOL_PEN;
-
-  if (pen_alert_active) {
-    draw_pen_alert_animation(
-      ctx,
-      bounds,
-      scroll_offset_y,
-      (uint8_t)(
-        s_animation_tick / PILL_TICKS_PER_FRAME
-      ),
-      theme_foreground_color()
-    );
-  } else {
-    draw_physics_pills(ctx, bounds, pill_y);
-  }
-
-  /* Fixed foreground emblem; pills physically collide with it. */
-  draw_swiss_emblem(
-    ctx,
-    scroll_offset_y
-  );
-
-  cover_scrolled_alert_area(ctx, bounds);
-  draw_alert_page_button_hint(ctx, bounds);
-  draw_medications(
-    ctx,
-    bounds,
-    scroll_offset_y,
-    theme_foreground_color(),
-    theme_background_color()
-  );
 }
 
 static void band_arrow_update_proc(
@@ -610,6 +613,14 @@ static void band_update_proc(
   );
   graphics_fill_rect(ctx, layer_bounds, 0, GCornerNone);
 
+  draw_intake_medications(
+    ctx,
+    content_bounds,
+    visual_canvas_offset_y() - frame.origin.y,
+    theme_background_color(),
+    theme_foreground_color()
+  );
+
   draw_medications(
     ctx,
     content_bounds,
@@ -634,18 +645,13 @@ static void sync_medication_marquee(
   if (
     s_scroll.mode == SCROLL_IDLE &&
     !s_band.animating &&
-    s_band.target_visible &&
-    s_scroll.snap_index > 0
+    s_band.target_visible
   ) {
     const int row_index =
-        s_scroll.snap_index - 1;
+        scroll_all_medication_row_for_snap(s_scroll.snap_index);
 
-    if (
-      row_index >= 0 &&
-      row_index < LIST_ROW_COUNT &&
-      s_row_kinds[row_index] ==
-          MEDICATION_ROW_ITEM
-    ) {
+    if (row_index >= 0 && row_index < LIST_ROW_COUNT &&
+        s_row_kinds[row_index] == MEDICATION_ROW_ITEM) {
       active_row = (int8_t)row_index;
     }
   }
@@ -656,10 +662,7 @@ static void sync_medication_marquee(
     return;
   }
 
-  if (
-    advance &&
-    active_row >= 0
-  ) {
+  if (advance && active_row >= 0) {
     s_medication_marquee_tick++;
   }
 }
@@ -715,6 +718,144 @@ static void start_ui_timer(void) {
     ui_timer_callback,
     NULL
   );
+}
+
+static void alarm_screen_timer_handler(
+    void *context
+) {
+  (void)context;
+  s_alarm_screen_timer = NULL;
+
+  if (
+    !s_canvas_layer ||
+    s_transfer_screen_active ||
+    INTAKE_ROW_COUNT <= 0
+  ) {
+    return;
+  }
+
+  if (!s_alarm_active) {
+    s_alarm_transitioning_to_pills = false;
+    s_alarm_navigation_locked = false;
+    refresh_app_screen_state();
+    return;
+  }
+
+  /*
+   * Der temporäre Vespa-Screen liegt jetzt direkt unter der Pillenanimation.
+   * Ziel 0 ist deshalb genau eine Bildschirmhöhe nach oben.
+   */
+  scroll_to_snap_index(0);
+}
+
+void medication_ui_begin_alarm_sequence(void) {
+  cancel_timer(&s_alarm_screen_timer);
+  s_refresh_after_vespa_scroll = false;
+  s_alarm_navigation_locked = false;
+  s_alarm_transitioning_to_pills = false;
+
+  if (
+    !s_alarm_active ||
+    !s_canvas_layer ||
+    INTAKE_ROW_COUNT <= 0
+  ) {
+    return;
+  }
+
+  s_alarm_transitioning_to_pills = true;
+
+  /*
+   * refresh_app_screen_state() hat zunächst die normale Vespa-Position
+   * aufgebaut. Noch bevor der Eventloop sie zeichnet, setzen wir für das
+   * Alarm-Intro eine temporäre Zwei-Seiten-Geometrie:
+   *
+   *   Pillenanimation
+   *   Vespa
+   *
+   * Die Intake-Liste wird währenddessen nicht gezeichnet.
+   */
+  cancel_scroll_physics();
+
+  const int32_t intro_position_q8 =
+      -(int32_t)layer_get_bounds(s_canvas_layer).size.h *
+      SCROLL_Q8;
+
+  s_scroll.position_q8 = intro_position_q8;
+  s_scroll.target_q8 = intro_position_q8;
+  s_scroll.breakaway_anchor_q8 = intro_position_q8;
+  s_scroll.velocity_q8 = 0;
+  s_scroll.snap_index = 0;
+  s_scroll.mode = SCROLL_IDLE;
+  s_scroll.breakaway_locked = false;
+
+#if defined(PBL_TOUCH)
+  s_touch.dragging = false;
+#endif
+
+  mark_scene_dirty();
+
+  s_alarm_screen_timer = app_timer_register(
+    3000,
+    alarm_screen_timer_handler,
+    NULL
+  );
+
+  if (!s_alarm_screen_timer) {
+    alarm_screen_timer_handler(NULL);
+  }
+}
+
+void medication_ui_return_to_vespa_after_confirmation(void) {
+  cancel_timer(&s_alarm_screen_timer);
+  s_alarm_transitioning_to_pills = false;
+
+  /*
+   * Wenn noch eine zweite Medikamentengruppe offen ist, bleibt die
+   * Alarmnavigation verriegelt. refresh_app_screen_state() baut den neuen
+   * Intake-Snapshot auf und reset_ui_state() startet wegen des Locks direkt
+   * wieder auf der Pillenanimation - ohne Vespa-Zwischenstopp.
+   */
+  if (s_alarm_active) {
+    s_alarm_navigation_locked = true;
+    s_refresh_after_vespa_scroll = false;
+    refresh_app_screen_state();
+    return;
+  }
+
+  s_alarm_navigation_locked = false;
+  s_refresh_after_vespa_scroll = true;
+  scroll_to_snap_index(scroll_vespa_snap_index());
+}
+
+void medication_ui_scroll_settled(void) {
+  if (
+    s_alarm_transitioning_to_pills &&
+    s_scroll.snap_index == 0
+  ) {
+    /*
+     * Jetzt ist die Pillenanimation vollständig sichtbar. Erst ab diesem
+     * Moment kommt die Intake-Liste direkt darunter in den Scrollbereich.
+     * Die Vespa wird bis zum Ende des aktiven Alarms gesperrt.
+     */
+    s_alarm_transitioning_to_pills = false;
+    s_alarm_navigation_locked = s_alarm_active;
+    mark_scene_dirty();
+    return;
+  }
+
+  if (
+    !s_refresh_after_vespa_scroll ||
+    s_scroll.snap_index != scroll_vespa_snap_index()
+  ) {
+    return;
+  }
+
+  s_refresh_after_vespa_scroll = false;
+  refresh_app_screen_state();
+
+  if (s_alarm_active && INTAKE_ROW_COUNT > 0) {
+    medication_ui_begin_alarm_sequence();
+  }
 }
 
 static void scroll_up_handler(
@@ -816,16 +957,19 @@ static void reset_ui_state(GRect bounds) {
   s_medication_marquee_row = -1;
   s_taken_hint_phase = -1;
 
+  const int initial_snap_index =
+      medication_ui_alarm_navigation_locked()
+          ? 0
+          : scroll_vespa_snap_index();
+
   const int32_t initial_position_q8 =
-      CANVAS_START_OFFSET_Y *
-      SCROLL_Q8;
+      scroll_snap_anchor_y(initial_snap_index) * SCROLL_Q8;
 
   s_scroll = (ScrollState) {
     .position_q8 = initial_position_q8,
     .target_q8 = initial_position_q8,
-    .breakaway_anchor_q8 =
-        initial_position_q8,
-    .snap_index = 0,
+    .breakaway_anchor_q8 = initial_position_q8,
+    .snap_index = initial_snap_index,
     .mode = SCROLL_IDLE
   };
 
@@ -833,39 +977,24 @@ static void reset_ui_state(GRect bounds) {
   s_touch = (ScrollTouchState) { 0 };
 #endif
 
-  cancel_timer(
-    &s_band_animation_timer
-  );
-
+  cancel_timer(&s_band_animation_timer);
   s_band = (BandAnimationState) {
-    .x_q8 =
-        bounds.size.w *
-        SCROLL_Q8,
-    .target_x_q8 =
-        bounds.size.w *
-        SCROLL_Q8,
+    .x_q8 = bounds.size.w * SCROLL_Q8,
+    .target_x_q8 = bounds.size.w * SCROLL_Q8,
     .target_visible = false,
     .animating = false
   };
 
   if (s_band_layer) {
-    set_band_layer_x_q8(
-      s_band.x_q8
-    );
-
-    set_band_and_arrow_hidden(
-      true
-    );
+    set_band_layer_x_q8(s_band.x_q8);
+    set_band_and_arrow_hidden(true);
   }
 
   s_confirm_radius = 0;
   s_confirm_max_radius =
-      bounds.size.w +
-      CONFIRM_CENTER_OUTSIDE_X +
-      bounds.size.h / 2;
+      bounds.size.w + CONFIRM_CENTER_OUTSIDE_X + bounds.size.h / 2;
   s_confirmation_state = CONFIRM_IDLE;
   s_confirmation_symbol_set = false;
-
   s_check_size = 0;
   s_check_state = CHECK_HIDDEN;
 }
@@ -875,25 +1004,17 @@ void refresh_app_screen_state(void) {
     return;
   }
 
+  cancel_timer(&s_alarm_screen_timer);
   reset_medication_confirmations();
 
   const bool show_confirmed_screen =
-      alarm_unconfirmed_symbol_mask_at(
-        time(NULL)
-      ) == 0;
+      alarm_unconfirmed_symbol_mask_at(time(NULL)) == 0;
   const bool state_changed =
-      s_confirmed_screen_active !=
-          show_confirmed_screen;
+      s_confirmed_screen_active != show_confirmed_screen;
+  s_confirmed_screen_active = show_confirmed_screen;
 
-  s_confirmed_screen_active =
-      show_confirmed_screen;
-
-  if (show_confirmed_screen) {
-    rebuild_all_medication_rows();
-  } else {
-    rebuild_medication_rows();
-  }
-
+  rebuild_medication_rows();
+  rebuild_all_medication_rows();
   pill_physics_rebuild();
 
   if (!s_canvas_layer) {
@@ -903,46 +1024,24 @@ void refresh_app_screen_state(void) {
   cancel_timer(&s_ui_timer);
   cancel_timer(&s_band_animation_timer);
   cancel_scroll_physics();
-
 #if defined(PBL_TOUCH)
   s_touch.dragging = false;
 #endif
 
-  layer_set_hidden(
-    s_canvas_layer,
-    false
-  );
-
-  reset_ui_state(
-    layer_get_bounds(s_canvas_layer)
-  );
+  layer_set_hidden(s_canvas_layer, false);
+  reset_ui_state(layer_get_bounds(s_canvas_layer));
 
   if (s_confirmation_layer) {
-    layer_set_hidden(
-      s_confirmation_layer,
-      show_confirmed_screen
-    );
+    layer_set_hidden(s_confirmation_layer, show_confirmed_screen);
   }
-
-  /*
-   * Der grüne Haken ist nur der Inhalt von Seite 0.
-   * Der Interaktionszustand bleibt exakt derselbe wie
-   * auf der normalen Pillenseite: CONFIRM_IDLE.
-   */
 
   start_ui_timer();
   mark_scene_dirty();
-
   pill_physics_update_activity();
 
   if (state_changed) {
-    APP_LOG(
-      APP_LOG_LEVEL_INFO,
-      "App screen: %s",
-      show_confirmed_screen
-          ? "confirmed with all medications"
-          : "alert"
-    );
+    APP_LOG(APP_LOG_LEVEL_INFO, "App intake state: %s",
+            show_confirmed_screen ? "complete" : "pending");
   }
 }
 
@@ -1096,9 +1195,14 @@ static void window_appear(Window *window) {
 }
 
 static void window_disappear(Window *window) {
+  s_alarm_transitioning_to_pills = false;
+  s_alarm_navigation_locked = false;
+
   s_pill_physics_window_visible = false;
   pill_physics_update_activity();
 
+  cancel_timer(&s_alarm_screen_timer);
+  s_refresh_after_vespa_scroll = false;
   cancel_timer(&s_ui_timer);
   cancel_timer(&s_confirmation_timer);
   cancel_timer(&s_band_animation_timer);
@@ -1111,7 +1215,12 @@ static void window_disappear(Window *window) {
 }
 
 static void window_unload(Window *window) {
+  s_alarm_transitioning_to_pills = false;
+  s_alarm_navigation_locked = false;
+
   pill_physics_stop();
+  cancel_timer(&s_alarm_screen_timer);
+  s_refresh_after_vespa_scroll = false;
   cancel_timer(&s_transfer_close_timer);
   cancel_timer(&s_transfer_animation_timer);
   cancel_timer(&s_ui_timer);
@@ -1188,6 +1297,11 @@ void medication_ui_init(void) {
 }
 
 void medication_ui_deinit(void) {
+  s_alarm_transitioning_to_pills = false;
+  s_alarm_navigation_locked = false;
+
+  cancel_timer(&s_alarm_screen_timer);
+  s_refresh_after_vespa_scroll = false;
   cancel_timer(&s_transfer_close_timer);
   cancel_timer(&s_transfer_animation_timer);
   cancel_timer(&s_ui_timer);

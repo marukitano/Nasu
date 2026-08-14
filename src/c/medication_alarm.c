@@ -879,6 +879,7 @@ void alarm_start(void) {
    */
   s_alarm_visuals_are_paused = true;
   refresh_app_screen_state();
+  medication_ui_begin_alarm_sequence();
 
   cancel_timer(&s_alarm_intro_timer);
   s_alarm_intro_timer = app_timer_register(

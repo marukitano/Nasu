@@ -16,11 +16,18 @@ extern const char *s_rows[MAX_LIST_ROWS];
 extern MedicationRowKind s_row_kinds[MAX_LIST_ROWS];
 extern int8_t s_row_medication_indices[MAX_LIST_ROWS];
 extern uint8_t s_list_row_count;
+
+extern int8_t s_intake_medication_indices[MAX_LIST_ROWS];
+extern uint8_t s_intake_row_count;
+extern MedicationSymbol s_intake_symbol;
+extern bool s_intake_symbol_set;
+
 extern MedicationTime s_visible_medication_time;
 extern bool s_visible_medication_time_set;
 extern bool s_pills_confirmed;
 extern bool s_pen_confirmed;
 #define LIST_ROW_COUNT ((int)s_list_row_count)
+#define INTAKE_ROW_COUNT ((int)s_intake_row_count)
 
 extern Window *s_window;
 extern Layer *s_canvas_layer;

@@ -33,11 +33,15 @@ static const VibePattern s_impact_vibration_pattern = {
 #define CONFIRM_OK_BOUNCE_DOWN_MS 450
 #define CONFIRM_OK_RELEASE_SETTLE_Y 52
 #define CONFIRM_OK_PROGRESS_MAX 1000
+#define CONFIRM_OK_ACCEPT_PULSE_MS 180
+#define CONFIRM_OK_SCALE_Q8 256
+#define CONFIRM_OK_ACCEPT_EXTRA_SCALE_Q8 64
 
 typedef enum {
   CONFIRM_OK_HIDDEN,
   CONFIRM_OK_BOUNCING_IN,
   CONFIRM_OK_VISIBLE,
+  CONFIRM_OK_ACCEPTING,
   CONFIRM_OK_BOUNCING_DOWN
 } ConfirmationOkState;
 
@@ -52,6 +56,7 @@ static uint8_t
 static ConfirmationOkState s_confirmation_ok_state;
 static uint16_t s_confirmation_ok_elapsed_ms;
 static int16_t s_confirmation_ok_offset_y;
+static uint16_t s_confirmation_ok_scale_q8;
 static bool s_confirmation_release_pending;
 
 static uint16_t integer_sqrt_u32(uint32_t value) {
@@ -85,6 +90,7 @@ static void reset_confirmation_image(void) {
   s_confirmation_ok_state = CONFIRM_OK_HIDDEN;
   s_confirmation_ok_elapsed_ms = 0;
   s_confirmation_ok_offset_y = 0;
+  s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
   s_confirmation_release_pending = false;
 }
 
@@ -149,6 +155,7 @@ static bool prepare_confirmation_image(void) {
   s_confirmation_ok_state = CONFIRM_OK_HIDDEN;
   s_confirmation_ok_elapsed_ms = 0;
   s_confirmation_ok_offset_y = 0;
+  s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
   s_confirmation_release_pending = false;
   return true;
 }
@@ -367,6 +374,129 @@ static bool draw_streamed_confirmation_image_to_framebuffer(
   return !s_confirmation_image_error_logged;
 }
 
+
+static bool draw_scaled_confirmation_image_to_framebuffer(
+    uint8_t *framebuffer_data,
+    int framebuffer_stride,
+    ResHandle resource,
+    int16_t offset_y,
+    uint16_t scale_q8
+) {
+  if (
+    !framebuffer_data ||
+    framebuffer_stride < CONFIRM_IMAGE_WIDTH ||
+    !resource ||
+    scale_q8 < CONFIRM_OK_SCALE_Q8
+  ) {
+    return false;
+  }
+
+  const int32_t scaled_width =
+      (CONFIRM_IMAGE_WIDTH * (int32_t)scale_q8 +
+       CONFIRM_OK_SCALE_Q8 / 2) /
+      CONFIRM_OK_SCALE_Q8;
+  const int32_t scaled_height =
+      (CONFIRM_IMAGE_HEIGHT * (int32_t)scale_q8 +
+       CONFIRM_OK_SCALE_Q8 / 2) /
+      CONFIRM_OK_SCALE_Q8;
+
+  const int16_t destination_left =
+      (int16_t)((CONFIRM_IMAGE_WIDTH - scaled_width) / 2);
+  const int16_t destination_top =
+      (int16_t)(offset_y +
+      (CONFIRM_IMAGE_HEIGHT - scaled_height) / 2);
+
+  for (
+    int16_t block_row = 0;
+    block_row < CONFIRM_IMAGE_HEIGHT;
+    block_row += CONFIRM_IMAGE_ROWS_PER_CHUNK
+  ) {
+    const int16_t rows_in_block =
+        block_row + CONFIRM_IMAGE_ROWS_PER_CHUNK <= CONFIRM_IMAGE_HEIGHT
+            ? CONFIRM_IMAGE_ROWS_PER_CHUNK
+            : CONFIRM_IMAGE_HEIGHT - block_row;
+    const size_t block_bytes =
+        (size_t)rows_in_block * CONFIRM_IMAGE_WIDTH;
+    const size_t loaded = resource_load_byte_range(
+      resource,
+      (uint32_t)block_row * CONFIRM_IMAGE_WIDTH,
+      s_confirmation_image_chunk,
+      block_bytes
+    );
+
+    if (loaded != block_bytes) {
+      log_confirmation_image_render_error(
+        "Could not stream scaled confirmation image"
+      );
+      return false;
+    }
+
+    for (int16_t local_row = 0; local_row < rows_in_block; local_row++) {
+      const int16_t source_y = block_row + local_row;
+      int32_t destination_y_start = destination_top +
+          ((int32_t)source_y * scaled_height) / CONFIRM_IMAGE_HEIGHT;
+      int32_t destination_y_end = destination_top +
+          ((int32_t)(source_y + 1) * scaled_height) / CONFIRM_IMAGE_HEIGHT - 1;
+
+      if (destination_y_end < destination_y_start) {
+        destination_y_end = destination_y_start;
+      }
+      if (destination_y_end < 0 || destination_y_start >= CONFIRM_IMAGE_HEIGHT) {
+        continue;
+      }
+      if (destination_y_start < 0) {
+        destination_y_start = 0;
+      }
+      if (destination_y_end >= CONFIRM_IMAGE_HEIGHT) {
+        destination_y_end = CONFIRM_IMAGE_HEIGHT - 1;
+      }
+
+      const uint8_t *source = s_confirmation_image_chunk +
+          local_row * CONFIRM_IMAGE_WIDTH;
+      const int16_t visible_left = destination_left < 0 ? 0 : destination_left;
+      const int32_t scaled_right = destination_left + scaled_width - 1;
+      const int16_t visible_right =
+          scaled_right >= CONFIRM_IMAGE_WIDTH
+              ? CONFIRM_IMAGE_WIDTH - 1
+              : (int16_t)scaled_right;
+
+      if (visible_right < visible_left) {
+        continue;
+      }
+
+      for (int32_t destination_y = destination_y_start;
+           destination_y <= destination_y_end;
+           destination_y++) {
+        uint8_t *destination = framebuffer_data +
+            destination_y * framebuffer_stride;
+
+        for (int16_t destination_x = visible_left;
+             destination_x <= visible_right;
+             destination_x++) {
+          const int32_t local_x = destination_x - destination_left;
+          int16_t source_x = (int16_t)(
+              (local_x * CONFIRM_IMAGE_WIDTH) / scaled_width
+          );
+
+          if (source_x < 0) {
+            source_x = 0;
+          } else if (source_x >= CONFIRM_IMAGE_WIDTH) {
+            source_x = CONFIRM_IMAGE_WIDTH - 1;
+          }
+
+          const uint8_t pixel = source[source_x];
+          if ((pixel & 0xC0) != 0) {
+            destination[destination_x] = pixel;
+          }
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+
 static int16_t confirmation_ok_bounce_in_offset(
     uint16_t progress
 ) {
@@ -487,6 +617,7 @@ static void start_confirmation_ok_bounce_in(void) {
   s_confirmation_ok_elapsed_ms = 0;
   s_confirmation_ok_offset_y =
       -CONFIRM_IMAGE_HEIGHT;
+  s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
 }
 
 static void start_confirmation_ok_bounce_down(void) {
@@ -494,6 +625,21 @@ static void start_confirmation_ok_bounce_down(void) {
       CONFIRM_OK_BOUNCING_DOWN;
   s_confirmation_ok_elapsed_ms = 0;
   s_confirmation_ok_offset_y = 0;
+  s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
+}
+
+static void start_confirmation_ok_accept_feedback(void) {
+  if (s_confirmation_ok_state != CONFIRM_OK_VISIBLE) {
+    return;
+  }
+
+  s_confirmation_ok_state = CONFIRM_OK_ACCEPTING;
+  s_confirmation_ok_elapsed_ms = 0;
+  s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
+
+  vibes_enqueue_custom_pattern(
+    s_impact_vibration_pattern
+  );
 }
 
 static void draw_confirmation_circle(
@@ -842,43 +988,25 @@ static bool first_unconfirmed_due_symbol(
 static bool selected_confirmation_symbol(
     MedicationSymbol *symbol
 ) {
-  if (s_scroll.snap_index == 0) {
-    return first_unconfirmed_due_symbol(symbol);
-  }
-
+  /*
+   * Snap 0 ist die Pillenanimation.
+   * Snap 1..N sind die fälligen Intake-Zeilen.
+   *
+   * Während eines Alarms muss die Mitteltaste auf beiden Ebenen dieselbe
+   * aktuell fällige Medikamentengruppe bestätigen können.
+   */
   if (
-    s_scroll.snap_index < 1 ||
-    s_scroll.snap_index > LIST_ROW_COUNT
+    s_scroll.snap_index > INTAKE_ROW_COUNT ||
+    !s_intake_symbol_set
   ) {
     return false;
   }
 
-  const uint8_t row_index =
-      (uint8_t)(s_scroll.snap_index - 1);
-
-  if (
-    s_row_kinds[row_index] ==
-        MEDICATION_ROW_CONFIRM_PILLS
-  ) {
-    if (symbol) {
-      *symbol = MEDICATION_SYMBOL_PILL;
-    }
-
-    return true;
+  if (symbol) {
+    *symbol = s_intake_symbol;
   }
 
-  if (
-    s_row_kinds[row_index] ==
-        MEDICATION_ROW_CONFIRM_PEN
-  ) {
-    if (symbol) {
-      *symbol = MEDICATION_SYMBOL_PEN;
-    }
-
-    return true;
-  }
-
-  return false;
+  return true;
 }
 
 static bool confirmation_prompt_is_active(
@@ -892,17 +1020,7 @@ static bool confirmation_prompt_is_active(
   ) {
     return false;
   }
-
-  if (s_scroll.snap_index == 0) {
-    return true;
-  }
-
-  return
-      s_band.target_visible &&
-      s_band_layer &&
-      !layer_get_hidden(
-        s_band_layer
-      );
+  return true;
 }
 
 void update_taken_button_hint_pulse(void) {
@@ -1336,14 +1454,27 @@ void confirmation_update_proc(
       s_confirmation_ok_state !=
           CONFIRM_OK_HIDDEN
     ) {
-      draw_streamed_confirmation_image_to_framebuffer(
-        framebuffer_data,
-        framebuffer_stride,
-        bounds,
-        s_confirmation_ok_resource,
-        s_confirmation_ok_offset_y,
-        false
-      );
+      if (
+        s_confirmation_ok_scale_q8 ==
+            CONFIRM_OK_SCALE_Q8
+      ) {
+        draw_streamed_confirmation_image_to_framebuffer(
+          framebuffer_data,
+          framebuffer_stride,
+          bounds,
+          s_confirmation_ok_resource,
+          s_confirmation_ok_offset_y,
+          false
+        );
+      } else {
+        draw_scaled_confirmation_image_to_framebuffer(
+          framebuffer_data,
+          framebuffer_stride,
+          s_confirmation_ok_resource,
+          s_confirmation_ok_offset_y,
+          s_confirmation_ok_scale_q8
+        );
+      }
     }
 
     graphics_release_frame_buffer(
@@ -1379,7 +1510,18 @@ static void confirm_medication_group(
 
 static void finish_confirmed_release(void) {
   if (s_confirmation_image_active) {
-    exit_app();
+    reset_confirmation_image();
+    s_confirm_radius = 0;
+    s_confirmation_state = CONFIRM_IDLE;
+    s_confirmation_symbol_set = false;
+    s_check_size = 0;
+    s_check_state = CHECK_HIDDEN;
+
+    if (s_confirmation_layer) {
+      layer_mark_dirty(s_confirmation_layer);
+    }
+
+    medication_ui_return_to_vespa_after_confirmation();
     return;
   }
 
@@ -1404,10 +1546,9 @@ static bool confirmation_animation_active(void) {
       s_check_state == CHECK_POPPING_OUT ||
       s_check_state == CHECK_AT_PEAK ||
       s_check_state == CHECK_SETTLING ||
-      s_confirmation_ok_state ==
-          CONFIRM_OK_BOUNCING_IN ||
-      s_confirmation_ok_state ==
-          CONFIRM_OK_BOUNCING_DOWN;
+      s_confirmation_ok_state == CONFIRM_OK_BOUNCING_IN ||
+      s_confirmation_ok_state == CONFIRM_OK_ACCEPTING ||
+      s_confirmation_ok_state == CONFIRM_OK_BOUNCING_DOWN;
 }
 
 static void update_confirmation_circle(void) {
@@ -1424,9 +1565,13 @@ static void update_confirmation_circle(void) {
     if (s_confirmation_image_active) {
       s_check_size = 0;
       s_check_state = CHECK_HIDDEN;
-      vibes_enqueue_custom_pattern(
-        s_impact_vibration_pattern
-      );
+
+      if (
+        s_confirmation_ok_state ==
+            CONFIRM_OK_VISIBLE
+      ) {
+        start_confirmation_ok_accept_feedback();
+      }
     } else {
       s_check_size = 8;
       s_check_state = CHECK_POPPING_OUT;
@@ -1499,47 +1644,70 @@ static void update_checkmark(void) {
 
 static void update_confirmation_ok(void) {
   if (
-    s_confirmation_ok_state !=
-        CONFIRM_OK_BOUNCING_IN &&
-    s_confirmation_ok_state !=
-        CONFIRM_OK_BOUNCING_DOWN
+    s_confirmation_ok_state != CONFIRM_OK_BOUNCING_IN &&
+    s_confirmation_ok_state != CONFIRM_OK_ACCEPTING &&
+    s_confirmation_ok_state != CONFIRM_OK_BOUNCING_DOWN
   ) {
     return;
   }
 
-  s_confirmation_ok_elapsed_ms +=
-      CONFIRM_ANIMATION_INTERVAL_MS;
+  s_confirmation_ok_elapsed_ms += CONFIRM_ANIMATION_INTERVAL_MS;
 
-  if (
-    s_confirmation_ok_state ==
-        CONFIRM_OK_BOUNCING_IN
-  ) {
-    uint16_t progress =
-        CONFIRM_OK_PROGRESS_MAX;
+  if (s_confirmation_ok_state == CONFIRM_OK_BOUNCING_IN) {
+    uint16_t progress = CONFIRM_OK_PROGRESS_MAX;
 
-    if (
-      s_confirmation_ok_elapsed_ms <
-          CONFIRM_OK_BOUNCE_IN_MS
-    ) {
+    if (s_confirmation_ok_elapsed_ms < CONFIRM_OK_BOUNCE_IN_MS) {
       progress = (uint16_t)(
-        ((uint32_t)s_confirmation_ok_elapsed_ms *
-         CONFIRM_OK_PROGRESS_MAX) /
+        ((uint32_t)s_confirmation_ok_elapsed_ms * CONFIRM_OK_PROGRESS_MAX) /
         CONFIRM_OK_BOUNCE_IN_MS
       );
     }
 
-    s_confirmation_ok_offset_y =
-        confirmation_ok_bounce_in_offset(
-          progress
-        );
+    s_confirmation_ok_offset_y = confirmation_ok_bounce_in_offset(progress);
 
-    if (
-      progress >=
-          CONFIRM_OK_PROGRESS_MAX
-    ) {
+    if (progress >= CONFIRM_OK_PROGRESS_MAX) {
       s_confirmation_ok_offset_y = 0;
-      s_confirmation_ok_state =
-          CONFIRM_OK_VISIBLE;
+      s_confirmation_ok_state = CONFIRM_OK_VISIBLE;
+      s_confirmation_ok_elapsed_ms = 0;
+      s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
+
+      if (s_confirmation_state == CONFIRM_COMPLETE) {
+        start_confirmation_ok_accept_feedback();
+      } else if (s_confirmation_release_pending) {
+        start_confirmation_ok_bounce_down();
+      }
+    }
+
+    return;
+  }
+
+  if (s_confirmation_ok_state == CONFIRM_OK_ACCEPTING) {
+    uint16_t progress = CONFIRM_OK_PROGRESS_MAX;
+
+    if (s_confirmation_ok_elapsed_ms < CONFIRM_OK_ACCEPT_PULSE_MS) {
+      progress = (uint16_t)(
+        ((uint32_t)s_confirmation_ok_elapsed_ms * CONFIRM_OK_PROGRESS_MAX) /
+        CONFIRM_OK_ACCEPT_PULSE_MS
+      );
+    }
+
+    uint16_t extra_scale;
+    if (progress <= 500) {
+      extra_scale = (uint16_t)(
+        ((uint32_t)CONFIRM_OK_ACCEPT_EXTRA_SCALE_Q8 * progress) / 500
+      );
+    } else {
+      extra_scale = (uint16_t)(
+        ((uint32_t)CONFIRM_OK_ACCEPT_EXTRA_SCALE_Q8 *
+         (CONFIRM_OK_PROGRESS_MAX - progress)) / 500
+      );
+    }
+
+    s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8 + extra_scale;
+
+    if (progress >= CONFIRM_OK_PROGRESS_MAX) {
+      s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
+      s_confirmation_ok_state = CONFIRM_OK_VISIBLE;
       s_confirmation_ok_elapsed_ms = 0;
 
       if (s_confirmation_release_pending) {
@@ -1550,36 +1718,23 @@ static void update_confirmation_ok(void) {
     return;
   }
 
-  uint16_t progress =
-      CONFIRM_OK_PROGRESS_MAX;
+  uint16_t progress = CONFIRM_OK_PROGRESS_MAX;
 
-  if (
-    s_confirmation_ok_elapsed_ms <
-        CONFIRM_OK_BOUNCE_DOWN_MS
-  ) {
+  if (s_confirmation_ok_elapsed_ms < CONFIRM_OK_BOUNCE_DOWN_MS) {
     progress = (uint16_t)(
-      ((uint32_t)s_confirmation_ok_elapsed_ms *
-       CONFIRM_OK_PROGRESS_MAX) /
+      ((uint32_t)s_confirmation_ok_elapsed_ms * CONFIRM_OK_PROGRESS_MAX) /
       CONFIRM_OK_BOUNCE_DOWN_MS
     );
   }
 
-  s_confirmation_ok_offset_y =
-      confirmation_ok_bounce_down_offset(
-        progress
-      );
+  s_confirmation_ok_offset_y = confirmation_ok_bounce_down_offset(progress);
 
-  if (
-    progress >=
-        CONFIRM_OK_PROGRESS_MAX
-  ) {
-    s_confirmation_ok_offset_y =
-        CONFIRM_IMAGE_HEIGHT + 16;
-    s_confirmation_ok_state =
-        CONFIRM_OK_HIDDEN;
+  if (progress >= CONFIRM_OK_PROGRESS_MAX) {
+    s_confirmation_ok_offset_y = CONFIRM_IMAGE_HEIGHT + 16;
+    s_confirmation_ok_state = CONFIRM_OK_HIDDEN;
     s_confirmation_ok_elapsed_ms = 0;
+    s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
     s_confirmation_release_pending = false;
-
     finish_confirmed_release();
   }
 }

@@ -1888,10 +1888,13 @@ static void pill_physics_tick(void *context) {
       }
     }
 
+    /* Doppelte Reaktion auf die Neigung, restliche Physik unverändert. */
     body->vx_q8 +=
-        drive_x / PILL_RB_ACCEL_DIVISOR;
+        ((int32_t)drive_x * 2) /
+        PILL_RB_ACCEL_DIVISOR;
     body->vy_q8 +=
-        drive_y / PILL_RB_ACCEL_DIVISOR;
+        ((int32_t)drive_y * 2) /
+        PILL_RB_ACCEL_DIVISOR;
 
     body->vx_q8 = pill_rb_clamp_int32(
       body->vx_q8,

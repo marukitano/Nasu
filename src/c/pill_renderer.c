@@ -2155,6 +2155,119 @@ static void draw_medication_name(
   );
 }
 
+void draw_intake_medications(
+    GContext *ctx,
+    GRect bounds,
+    int32_t scroll_offset_y,
+    GColor text_color,
+    GColor background_color
+) {
+  (void)background_color;
+
+  if (INTAKE_ROW_COUNT <= 0) {
+    return;
+  }
+
+  int16_t page_height = 228;
+  if (s_canvas_layer) {
+    page_height = layer_get_bounds(s_canvas_layer).size.h;
+  }
+
+  const int32_t page_start = page_height;
+  const int32_t rows_y =
+      page_start +
+      (page_height - MEDICATION_ROW_HEIGHT) / 2 +
+      scroll_offset_y;
+  const int32_t label_y =
+      rows_y - MEDICATION_HEADER_HEIGHT;
+
+  if (
+    rows_y + INTAKE_ROW_COUNT *
+        (MEDICATION_ROW_HEIGHT + MEDICATION_ROW_GAP) < 0 ||
+    label_y > bounds.size.h
+  ) {
+    return;
+  }
+
+  graphics_context_set_text_color(ctx, text_color);
+  graphics_draw_text(
+    ctx,
+    s_language == APP_LANGUAGE_ENGLISH ? "INTAKE" : "EINNAHME",
+    s_header_font,
+    GRect(bounds.origin.x + 10, (int16_t)label_y,
+          bounds.size.w - 20, MEDICATION_HEADER_HEIGHT),
+    GTextOverflowModeTrailingEllipsis,
+    GTextAlignmentCenter,
+    NULL
+  );
+
+  for (int row = 0; row < INTAKE_ROW_COUNT; row++) {
+    const int32_t row_y =
+        rows_y + row *
+        (MEDICATION_ROW_HEIGHT + MEDICATION_ROW_GAP);
+
+    if (row_y + MEDICATION_ROW_HEIGHT < 0 || row_y > bounds.size.h) {
+      continue;
+    }
+
+    const int8_t medication_index =
+        s_intake_medication_indices[row];
+    if (medication_index < 0 ||
+        medication_index >= (int8_t)s_medication_count) {
+      continue;
+    }
+
+    const MedicationSettings *medication =
+        &s_medications[medication_index];
+    char label[MEDICATION_LABEL_LENGTH];
+
+    if (medication->quantity > 1) {
+      snprintf(label, sizeof(label), "%s x%u",
+               medication->name, (unsigned int)medication->quantity);
+    } else {
+      snprintf(label, sizeof(label), "%s", medication->name);
+    }
+
+    const GRect name_frame = GRect(
+      bounds.origin.x + MEDICATION_ICON_TEXT_X,
+      (int16_t)row_y + MEDICATION_NAME_LINE_Y,
+      bounds.size.w - MEDICATION_ICON_TEXT_X - MEDICATION_ICON_TEXT_RIGHT,
+      MEDICATION_NAME_LINE_HEIGHT
+    );
+
+    graphics_draw_text(ctx, label, s_medication_font, name_frame,
+                       GTextOverflowModeTrailingEllipsis,
+                       GTextAlignmentLeft, NULL);
+    graphics_draw_text(
+      ctx, medication->effect, s_medication_detail_font,
+      GRect(name_frame.origin.x, (int16_t)row_y + MEDICATION_EFFECT_LINE_Y,
+            name_frame.size.w, MEDICATION_DETAIL_LINE_HEIGHT),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL
+    );
+    graphics_draw_text(
+      ctx, medication->dosage, s_medication_detail_font,
+      GRect(name_frame.origin.x, (int16_t)row_y + MEDICATION_DOSAGE_LINE_Y,
+            name_frame.size.w, MEDICATION_DETAIL_LINE_HEIGHT),
+      GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL
+    );
+
+    const MedicationAppearance *appearance =
+        medication_index < (int8_t)s_medication_appearance_count &&
+        s_medication_appearances[medication_index].valid
+            ? &s_medication_appearances[medication_index]
+            : NULL;
+
+    draw_medication_icon(
+      ctx,
+      GRect(bounds.origin.x + MEDICATION_ICON_LEFT,
+            (int16_t)row_y +
+                (MEDICATION_ROW_HEIGHT - MEDICATION_ICON_SIZE) / 2,
+            MEDICATION_ICON_SIZE, MEDICATION_ICON_SIZE),
+      medication, appearance, text_color
+    );
+  }
+}
+
 void draw_medications(
     GContext *ctx,
     GRect bounds,
@@ -2169,17 +2282,16 @@ void draw_medications(
         layer_get_bounds(s_canvas_layer).size.h;
   }
 
-  const int32_t label_y =
-      MEDICATION_PAGE_HEADER_TOP(
-        page_height
-      ) +
-      scroll_offset_y;
+  const int32_t page_start =
+      scroll_all_medications_page_start_y();
 
   const int32_t rows_y =
-      MEDICATION_PAGE_FIRST_ROW_TOP(
-        page_height
-      ) +
+      page_start +
+      (page_height - MEDICATION_ROW_HEIGHT) / 2 +
       scroll_offset_y;
+
+  const int32_t label_y =
+      rows_y - MEDICATION_HEADER_HEIGHT;
 
   if (
     rows_y +
@@ -2194,17 +2306,9 @@ void draw_medications(
 
   graphics_draw_text(
     ctx,
-    s_confirmed_screen_active
-        ? (
-            s_language == APP_LANGUAGE_ENGLISH
-                ? "ALL MEDICATIONS"
-                : "ALLE MEDIKAMENTE"
-          )
-        : (
-            s_language == APP_LANGUAGE_ENGLISH
-                ? "INTAKE"
-                : "EINNAHME"
-          ),
+    s_language == APP_LANGUAGE_ENGLISH
+        ? "ALL MEDICATIONS"
+        : "ALLE MEDIKAMENTE",
     s_header_font,
     GRect(
       bounds.origin.x + 10,

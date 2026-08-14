@@ -16,6 +16,12 @@ const char *s_rows[MAX_LIST_ROWS];
 MedicationRowKind s_row_kinds[MAX_LIST_ROWS];
 int8_t s_row_medication_indices[MAX_LIST_ROWS];
 uint8_t s_list_row_count = 1;
+
+int8_t s_intake_medication_indices[MAX_LIST_ROWS];
+uint8_t s_intake_row_count;
+MedicationSymbol s_intake_symbol;
+bool s_intake_symbol_set;
+
 MedicationTime s_visible_medication_time;
 bool s_visible_medication_time_set;
 bool s_pills_confirmed;
