@@ -25,15 +25,33 @@ static const VibePattern s_impact_vibration_pattern = {
 
 #define CONFIRM_IMAGE_WIDTH 200
 #define CONFIRM_IMAGE_HEIGHT 228
-#define CONFIRM_IMAGE_ROWS_PER_CHUNK 5
+#define CONFIRM_IMAGE_ROWS_PER_CHUNK 10
 #define CONFIRM_IMAGE_CHUNK_BYTES \
   (CONFIRM_IMAGE_WIDTH * CONFIRM_IMAGE_ROWS_PER_CHUNK)
 
-static ResHandle s_confirmation_image_resource;
+#define CONFIRM_OK_BOUNCE_IN_MS 540
+#define CONFIRM_OK_BOUNCE_DOWN_MS 450
+#define CONFIRM_OK_RELEASE_SETTLE_Y 52
+#define CONFIRM_OK_PROGRESS_MAX 1000
+
+typedef enum {
+  CONFIRM_OK_HIDDEN,
+  CONFIRM_OK_BOUNCING_IN,
+  CONFIRM_OK_VISIBLE,
+  CONFIRM_OK_BOUNCING_DOWN
+} ConfirmationOkState;
+
+static ResHandle s_confirmation_nasu_resource;
+static ResHandle s_confirmation_ok_resource;
 static bool s_confirmation_image_active;
 static bool s_confirmation_image_error_logged;
 static uint8_t
     s_confirmation_image_chunk[CONFIRM_IMAGE_CHUNK_BYTES];
+
+static ConfirmationOkState s_confirmation_ok_state;
+static uint16_t s_confirmation_ok_elapsed_ms;
+static int16_t s_confirmation_ok_offset_y;
+static bool s_confirmation_release_pending;
 
 static uint16_t integer_sqrt_u32(uint32_t value) {
   uint32_t remainder = value;
@@ -60,46 +78,77 @@ static uint16_t integer_sqrt_u32(uint32_t value) {
 
 static void reset_confirmation_image(void) {
   s_confirmation_image_active = false;
-  s_confirmation_image_resource = NULL;
+  s_confirmation_nasu_resource = NULL;
+  s_confirmation_ok_resource = NULL;
   s_confirmation_image_error_logged = false;
+  s_confirmation_ok_state = CONFIRM_OK_HIDDEN;
+  s_confirmation_ok_elapsed_ms = 0;
+  s_confirmation_ok_offset_y = 0;
+  s_confirmation_release_pending = false;
 }
 
-static bool prepare_confirmation_image(void) {
-  s_confirmation_image_resource =
-      resource_get_handle(
-        RESOURCE_ID_RAW_OK2
-      );
-
-  if (!s_confirmation_image_resource) {
+static bool confirmation_resource_valid(
+    ResHandle resource,
+    const char *name
+) {
+  if (!resource) {
     APP_LOG(
       APP_LOG_LEVEL_ERROR,
-      "Confirmation RAW_OK2 resource missing"
+      "Confirmation %s resource missing",
+      name
     );
-    reset_confirmation_image();
     return false;
   }
 
-  const size_t resource_bytes =
-      resource_size(
-        s_confirmation_image_resource
-      );
+  const size_t bytes = resource_size(resource);
 
   if (
-    resource_bytes !=
+    bytes !=
         CONFIRM_IMAGE_WIDTH *
         CONFIRM_IMAGE_HEIGHT
   ) {
     APP_LOG(
       APP_LOG_LEVEL_ERROR,
-      "Confirmation RAW_OK2 wrong size: %lu",
-      (unsigned long)resource_bytes
+      "Confirmation %s wrong size: %lu",
+      name,
+      (unsigned long)bytes
     );
+    return false;
+  }
+
+  return true;
+}
+
+static bool prepare_confirmation_image(void) {
+  s_confirmation_nasu_resource =
+      resource_get_handle(
+        RESOURCE_ID_RAW_CONFIRM_NASU
+      );
+  s_confirmation_ok_resource =
+      resource_get_handle(
+        RESOURCE_ID_RAW_CONFIRM_OK
+      );
+
+  if (
+    !confirmation_resource_valid(
+      s_confirmation_nasu_resource,
+      "RAW_CONFIRM_NASU"
+    ) ||
+    !confirmation_resource_valid(
+      s_confirmation_ok_resource,
+      "RAW_CONFIRM_OK"
+    )
+  ) {
     reset_confirmation_image();
     return false;
   }
 
   s_confirmation_image_active = true;
   s_confirmation_image_error_logged = false;
+  s_confirmation_ok_state = CONFIRM_OK_HIDDEN;
+  s_confirmation_ok_elapsed_ms = 0;
+  s_confirmation_ok_offset_y = 0;
+  s_confirmation_release_pending = false;
   return true;
 }
 
@@ -119,137 +168,125 @@ static void log_confirmation_image_render_error(
   );
 }
 
-static bool draw_confirmation_image_reveal(
-    GContext *ctx,
-    GRect bounds
+static bool draw_streamed_confirmation_image_to_framebuffer(
+    uint8_t *framebuffer_data,
+    int framebuffer_stride,
+    GRect bounds,
+    ResHandle resource,
+    int16_t offset_y,
+    bool clip_to_confirm_radius
 ) {
   if (
     !s_confirmation_image_active ||
-    !s_confirmation_image_resource ||
-    s_confirm_radius <= 0
+    !framebuffer_data ||
+    framebuffer_stride < CONFIRM_IMAGE_WIDTH ||
+    !resource
   ) {
     return false;
   }
 
-  if (
-    bounds.origin.x != 0 ||
-    bounds.origin.y != 0 ||
-    bounds.size.w != CONFIRM_IMAGE_WIDTH ||
-    bounds.size.h != CONFIRM_IMAGE_HEIGHT
+  const int16_t center_x =
+      bounds.size.w +
+      CONFIRM_CENTER_OUTSIDE_X;
+  const int16_t center_y =
+      bounds.size.h / 2;
+
+  const uint32_t radius_squared =
+      (uint32_t)s_confirm_radius *
+      (uint32_t)s_confirm_radius;
+
+  const int16_t visible_top =
+      center_y - s_confirm_radius;
+  const int16_t visible_bottom =
+      center_y + s_confirm_radius;
+
+  for (
+    int16_t block_row = 0;
+    block_row < CONFIRM_IMAGE_HEIGHT;
+    block_row += CONFIRM_IMAGE_ROWS_PER_CHUNK
   ) {
-    log_confirmation_image_render_error(
-      "Confirmation layer geometry unexpected"
-    );
-    return false;
-  }
+    const int16_t rows_in_block =
+        block_row +
+                CONFIRM_IMAGE_ROWS_PER_CHUNK <=
+            CONFIRM_IMAGE_HEIGHT
+            ? CONFIRM_IMAGE_ROWS_PER_CHUNK
+            : CONFIRM_IMAGE_HEIGHT -
+                  block_row;
 
-  GBitmap *framebuffer =
-      graphics_capture_frame_buffer(ctx);
+    const int16_t destination_block_top =
+        block_row + offset_y;
+    const int16_t destination_block_bottom =
+        destination_block_top +
+        rows_in_block - 1;
 
-  if (!framebuffer) {
-    log_confirmation_image_render_error(
-      "Could not capture framebuffer"
-    );
-    return false;
-  }
-
-  bool rendered = false;
-
-  do {
+    /*
+     * Do not even touch the resource when this chunk is completely outside
+     * the display. This matters especially while OK is entering/leaving.
+     */
     if (
-      gbitmap_get_format(framebuffer) !=
-          GBitmapFormat8Bit
+      destination_block_bottom < 0 ||
+      destination_block_top >= CONFIRM_IMAGE_HEIGHT
     ) {
-      log_confirmation_image_render_error(
-        "Framebuffer is not 8-bit"
-      );
-      break;
+      continue;
     }
 
-    uint8_t *framebuffer_data =
-        gbitmap_get_data(framebuffer);
-
-    const int framebuffer_stride =
-        gbitmap_get_bytes_per_row(framebuffer);
-
+    /* Same optimisation for the circular Nasu reveal. */
     if (
-      !framebuffer_data ||
-      framebuffer_stride <
-          CONFIRM_IMAGE_WIDTH
+      clip_to_confirm_radius &&
+      (
+        s_confirm_radius <= 0 ||
+        destination_block_bottom < visible_top ||
+        destination_block_top > visible_bottom
+      )
     ) {
-      log_confirmation_image_render_error(
-        "Framebuffer data unavailable"
-      );
-      break;
+      continue;
     }
 
-    const int16_t center_x =
-        bounds.size.w +
-        CONFIRM_CENTER_OUTSIDE_X;
-    const int16_t center_y =
-        bounds.size.h / 2;
+    const size_t block_bytes =
+        (size_t)rows_in_block *
+        CONFIRM_IMAGE_WIDTH;
 
-    const uint32_t radius_squared =
-        (uint32_t)s_confirm_radius *
-        (uint32_t)s_confirm_radius;
+    const size_t loaded =
+        resource_load_byte_range(
+          resource,
+          (uint32_t)block_row *
+              CONFIRM_IMAGE_WIDTH,
+          s_confirmation_image_chunk,
+          block_bytes
+        );
 
-    const int16_t visible_top =
-        center_y - s_confirm_radius;
-    const int16_t visible_bottom =
-        center_y + s_confirm_radius;
+    if (loaded != block_bytes) {
+      log_confirmation_image_render_error(
+        "Could not stream confirmation image"
+      );
+      return false;
+    }
 
     for (
-      int16_t block_row = 0;
-      block_row < CONFIRM_IMAGE_HEIGHT;
-      block_row += CONFIRM_IMAGE_ROWS_PER_CHUNK
+      int16_t local_row = 0;
+      local_row < rows_in_block;
+      local_row++
     ) {
-      const int16_t rows_in_block =
-          block_row +
-                  CONFIRM_IMAGE_ROWS_PER_CHUNK <=
-              CONFIRM_IMAGE_HEIGHT
-              ? CONFIRM_IMAGE_ROWS_PER_CHUNK
-              : CONFIRM_IMAGE_HEIGHT -
-                    block_row;
-
-      const int16_t block_last_row =
-          block_row + rows_in_block - 1;
+      const int16_t source_y =
+          block_row + local_row;
+      const int16_t destination_y =
+          source_y + offset_y;
 
       if (
-        block_last_row < visible_top ||
-        block_row > visible_bottom
+        destination_y < 0 ||
+        destination_y >= CONFIRM_IMAGE_HEIGHT
       ) {
         continue;
       }
 
-      const size_t block_bytes =
-          (size_t)rows_in_block *
-          CONFIRM_IMAGE_WIDTH;
+      int16_t left = 0;
+      int16_t right =
+          CONFIRM_IMAGE_WIDTH - 1;
 
-      const size_t loaded =
-          resource_load_byte_range(
-            s_confirmation_image_resource,
-            (uint32_t)block_row *
-                CONFIRM_IMAGE_WIDTH,
-            s_confirmation_image_chunk,
-            block_bytes
-          );
-
-      if (loaded != block_bytes) {
-        log_confirmation_image_render_error(
-          "Could not stream RAW_OK2"
-        );
-        break;
-      }
-
-      for (
-        int16_t local_row = 0;
-        local_row < rows_in_block;
-        local_row++
-      ) {
-        const int16_t y =
-            block_row + local_row;
+      if (clip_to_confirm_radius) {
         const int32_t dy =
-            (int32_t)y - center_y;
+            (int32_t)destination_y -
+            center_y;
 
         const int32_t remaining =
             (int32_t)radius_squared -
@@ -264,10 +301,8 @@ static bool draw_confirmation_image_reveal(
               (uint32_t)remaining
             );
 
-        int16_t left =
-            center_x - half_width;
-        int16_t right =
-            center_x + half_width;
+        left = center_x - half_width;
+        right = center_x + half_width;
 
         if (
           right < 0 ||
@@ -281,36 +316,184 @@ static bool draw_confirmation_image_reveal(
         }
 
         if (right >= CONFIRM_IMAGE_WIDTH) {
-          right = CONFIRM_IMAGE_WIDTH - 1;
+          right =
+              CONFIRM_IMAGE_WIDTH - 1;
+        }
+      }
+
+      uint8_t *destination =
+          framebuffer_data +
+          destination_y * framebuffer_stride;
+
+      const uint8_t *source =
+          s_confirmation_image_chunk +
+          local_row * CONFIRM_IMAGE_WIDTH;
+
+      /*
+       * 0x00 means transparent in the generated RAW files. Instead of
+       * assigning every opaque pixel individually, find continuous opaque
+       * runs and copy each run with memcpy().
+       */
+      int16_t x = left;
+
+      while (x <= right) {
+        while (
+          x <= right &&
+          (source[x] & 0xC0) == 0
+        ) {
+          x++;
         }
 
-        const size_t copy_bytes =
-            (size_t)(right - left + 1);
+        const int16_t run_start = x;
 
-        memcpy(
-          framebuffer_data +
-              y * framebuffer_stride +
-              left,
-          s_confirmation_image_chunk +
-              local_row *
-                  CONFIRM_IMAGE_WIDTH +
-              left,
-          copy_bytes
-        );
+        while (
+          x <= right &&
+          (source[x] & 0xC0) != 0
+        ) {
+          x++;
+        }
+
+        if (run_start < x) {
+          memcpy(
+            destination + run_start,
+            source + run_start,
+            (size_t)(x - run_start)
+          );
+        }
       }
     }
+  }
 
-    if (!s_confirmation_image_error_logged) {
-      rendered = true;
-    }
-  } while (false);
+  return !s_confirmation_image_error_logged;
+}
 
-  graphics_release_frame_buffer(
-    ctx,
-    framebuffer
+static int16_t confirmation_ok_bounce_in_offset(
+    uint16_t progress
+) {
+  if (progress < 720) {
+    const uint16_t local =
+        (uint16_t)(
+          ((uint32_t)progress *
+           CONFIRM_OK_PROGRESS_MAX) /
+          720
+        );
+
+    const int32_t inverse =
+        CONFIRM_OK_PROGRESS_MAX - local;
+    const int32_t eased =
+        CONFIRM_OK_PROGRESS_MAX -
+        (inverse * inverse) /
+            CONFIRM_OK_PROGRESS_MAX;
+
+    return (int16_t)(
+      -CONFIRM_IMAGE_HEIGHT +
+      ((CONFIRM_IMAGE_HEIGHT + 10) * eased) /
+          CONFIRM_OK_PROGRESS_MAX
+    );
+  }
+
+  if (progress < 870) {
+    const uint16_t local =
+        (uint16_t)(
+          ((uint32_t)(progress - 720) *
+           CONFIRM_OK_PROGRESS_MAX) /
+          150
+        );
+
+    return (int16_t)(
+      10 -
+      (16 * local) /
+          CONFIRM_OK_PROGRESS_MAX
+    );
+  }
+
+  const uint16_t local =
+      (uint16_t)(
+        ((uint32_t)(progress - 870) *
+         CONFIRM_OK_PROGRESS_MAX) /
+        130
+      );
+
+  return (int16_t)(
+    -6 +
+    (6 * local) /
+        CONFIRM_OK_PROGRESS_MAX
   );
+}
 
-  return rendered;
+static int16_t confirmation_ok_bounce_down_offset(
+    uint16_t progress
+) {
+  const int16_t floor_y =
+      CONFIRM_IMAGE_HEIGHT - 24;
+  const int16_t bounce_up_y =
+      CONFIRM_IMAGE_HEIGHT - 56;
+  const int16_t exit_y =
+      CONFIRM_IMAGE_HEIGHT + 16;
+
+  if (progress < 620) {
+    const uint16_t local =
+        (uint16_t)(
+          ((uint32_t)progress *
+           CONFIRM_OK_PROGRESS_MAX) /
+          620
+        );
+
+    const int32_t inverse =
+        CONFIRM_OK_PROGRESS_MAX - local;
+    const int32_t eased =
+        CONFIRM_OK_PROGRESS_MAX -
+        (inverse * inverse) /
+            CONFIRM_OK_PROGRESS_MAX;
+
+    return (int16_t)(
+      ((int32_t)floor_y * eased) /
+      CONFIRM_OK_PROGRESS_MAX
+    );
+  }
+
+  if (progress < 820) {
+    const uint16_t local =
+        (uint16_t)(
+          ((uint32_t)(progress - 620) *
+           CONFIRM_OK_PROGRESS_MAX) /
+          200
+        );
+
+    return (int16_t)(
+      floor_y -
+      ((int32_t)(floor_y - bounce_up_y) * local) /
+          CONFIRM_OK_PROGRESS_MAX
+    );
+  }
+
+  const uint16_t local =
+      (uint16_t)(
+        ((uint32_t)(progress - 820) *
+         CONFIRM_OK_PROGRESS_MAX) /
+        180
+      );
+
+  return (int16_t)(
+    bounce_up_y +
+    ((int32_t)(exit_y - bounce_up_y) * local) /
+        CONFIRM_OK_PROGRESS_MAX
+  );
+}
+
+static void start_confirmation_ok_bounce_in(void) {
+  s_confirmation_ok_state =
+      CONFIRM_OK_BOUNCING_IN;
+  s_confirmation_ok_elapsed_ms = 0;
+  s_confirmation_ok_offset_y =
+      -CONFIRM_IMAGE_HEIGHT;
+}
+
+static void start_confirmation_ok_bounce_down(void) {
+  s_confirmation_ok_state =
+      CONFIRM_OK_BOUNCING_DOWN;
+  s_confirmation_ok_elapsed_ms = 0;
+  s_confirmation_ok_offset_y = 0;
 }
 
 static void draw_confirmation_circle(
@@ -377,8 +560,10 @@ static void confirm_medication_group(
     MedicationSymbol symbol
 );
 static bool confirmation_animation_active(void);
+static void finish_confirmed_release(void);
 static void update_confirmation_circle(void);
 static void update_checkmark(void);
+static void update_confirmation_ok(void);
 static void confirmation_timer_callback(void *context);
 static void schedule_confirmation_timer(void);
 static void exit_app(void);
@@ -1021,13 +1206,91 @@ void confirmation_update_proc(
     return;
   }
 
-  if (
-    s_confirmation_image_active &&
-    draw_confirmation_image_reveal(
+  if (s_confirmation_image_active) {
+    if (
+      bounds.origin.x != 0 ||
+      bounds.origin.y != 0 ||
+      bounds.size.w != CONFIRM_IMAGE_WIDTH ||
+      bounds.size.h != CONFIRM_IMAGE_HEIGHT
+    ) {
+      log_confirmation_image_render_error(
+        "Confirmation layer geometry unexpected"
+      );
+      return;
+    }
+
+    GBitmap *framebuffer =
+        graphics_capture_frame_buffer(ctx);
+
+    if (!framebuffer) {
+      log_confirmation_image_render_error(
+        "Could not capture framebuffer"
+      );
+      return;
+    }
+
+    bool framebuffer_ok = true;
+
+    if (
+      gbitmap_get_format(framebuffer) !=
+          GBitmapFormat8Bit
+    ) {
+      log_confirmation_image_render_error(
+        "Framebuffer is not 8-bit"
+      );
+      framebuffer_ok = false;
+    }
+
+    uint8_t *framebuffer_data = NULL;
+    int framebuffer_stride = 0;
+
+    if (framebuffer_ok) {
+      framebuffer_data =
+          gbitmap_get_data(framebuffer);
+      framebuffer_stride =
+          gbitmap_get_bytes_per_row(framebuffer);
+
+      if (
+        !framebuffer_data ||
+        framebuffer_stride <
+            CONFIRM_IMAGE_WIDTH
+      ) {
+        log_confirmation_image_render_error(
+          "Framebuffer data unavailable"
+        );
+        framebuffer_ok = false;
+      }
+    }
+
+    if (framebuffer_ok) {
+      draw_streamed_confirmation_image_to_framebuffer(
+        framebuffer_data,
+        framebuffer_stride,
+        bounds,
+        s_confirmation_nasu_resource,
+        0,
+        true
+      );
+
+      if (
+        s_confirmation_ok_state !=
+            CONFIRM_OK_HIDDEN
+      ) {
+        draw_streamed_confirmation_image_to_framebuffer(
+          framebuffer_data,
+          framebuffer_stride,
+          bounds,
+          s_confirmation_ok_resource,
+          s_confirmation_ok_offset_y,
+          false
+        );
+      }
+    }
+
+    graphics_release_frame_buffer(
       ctx,
-      bounds
-    )
-  ) {
+      framebuffer
+    );
     return;
   }
 
@@ -1055,13 +1318,41 @@ static void confirm_medication_group(
    */
 }
 
+static void finish_confirmed_release(void) {
+  if (s_confirmation_image_active) {
+    if (unconfirmed_medication_group_is_due()) {
+      reset_confirmation_image();
+      refresh_app_screen_state();
+    }
+
+    return;
+  }
+
+  if (unconfirmed_medication_group_is_due()) {
+    reset_confirmation_image();
+    refresh_app_screen_state();
+    return;
+  }
+
+  if (s_confirmation_symbol_set) {
+    exit_app();
+    return;
+  }
+
+  refresh_app_screen_state();
+}
+
 static bool confirmation_animation_active(void) {
   return
       s_confirmation_state == CONFIRM_GROWING ||
       s_confirmation_state == CONFIRM_SHRINKING ||
       s_check_state == CHECK_POPPING_OUT ||
       s_check_state == CHECK_AT_PEAK ||
-      s_check_state == CHECK_SETTLING;
+      s_check_state == CHECK_SETTLING ||
+      s_confirmation_ok_state ==
+          CONFIRM_OK_BOUNCING_IN ||
+      s_confirmation_ok_state ==
+          CONFIRM_OK_BOUNCING_DOWN;
 }
 
 static void update_confirmation_circle(void) {
@@ -1078,6 +1369,7 @@ static void update_confirmation_circle(void) {
     if (s_confirmation_image_active) {
       s_check_size = 0;
       s_check_state = CHECK_HIDDEN;
+      start_confirmation_ok_bounce_in();
       vibes_enqueue_custom_pattern(
         s_impact_vibration_pattern
       );
@@ -1151,11 +1443,99 @@ static void update_checkmark(void) {
   }
 }
 
+static void update_confirmation_ok(void) {
+  if (
+    s_confirmation_ok_state !=
+        CONFIRM_OK_BOUNCING_IN &&
+    s_confirmation_ok_state !=
+        CONFIRM_OK_BOUNCING_DOWN
+  ) {
+    return;
+  }
+
+  s_confirmation_ok_elapsed_ms +=
+      CONFIRM_ANIMATION_INTERVAL_MS;
+
+  if (
+    s_confirmation_ok_state ==
+        CONFIRM_OK_BOUNCING_IN
+  ) {
+    uint16_t progress =
+        CONFIRM_OK_PROGRESS_MAX;
+
+    if (
+      s_confirmation_ok_elapsed_ms <
+          CONFIRM_OK_BOUNCE_IN_MS
+    ) {
+      progress = (uint16_t)(
+        ((uint32_t)s_confirmation_ok_elapsed_ms *
+         CONFIRM_OK_PROGRESS_MAX) /
+        CONFIRM_OK_BOUNCE_IN_MS
+      );
+    }
+
+    s_confirmation_ok_offset_y =
+        confirmation_ok_bounce_in_offset(
+          progress
+        );
+
+    if (
+      progress >=
+          CONFIRM_OK_PROGRESS_MAX
+    ) {
+      s_confirmation_ok_offset_y = 0;
+      s_confirmation_ok_state =
+          CONFIRM_OK_VISIBLE;
+      s_confirmation_ok_elapsed_ms = 0;
+
+      if (s_confirmation_release_pending) {
+        start_confirmation_ok_bounce_down();
+      }
+    }
+
+    return;
+  }
+
+  uint16_t progress =
+      CONFIRM_OK_PROGRESS_MAX;
+
+  if (
+    s_confirmation_ok_elapsed_ms <
+        CONFIRM_OK_BOUNCE_DOWN_MS
+  ) {
+    progress = (uint16_t)(
+      ((uint32_t)s_confirmation_ok_elapsed_ms *
+       CONFIRM_OK_PROGRESS_MAX) /
+      CONFIRM_OK_BOUNCE_DOWN_MS
+    );
+  }
+
+  s_confirmation_ok_offset_y =
+      confirmation_ok_bounce_down_offset(
+        progress
+      );
+
+  if (
+    progress >=
+        CONFIRM_OK_PROGRESS_MAX
+  ) {
+    s_confirmation_ok_offset_y =
+        CONFIRM_IMAGE_HEIGHT + 16;
+    s_confirmation_ok_state =
+        CONFIRM_OK_HIDDEN;
+    s_confirmation_ok_elapsed_ms = 0;
+    s_confirmation_release_pending = false;
+
+    finish_confirmed_release();
+  }
+}
+
 static void confirmation_timer_callback(void *context) {
   s_confirmation_timer = NULL;
 
   update_confirmation_circle();
   update_checkmark();
+  update_confirmation_ok();
 
   if (s_confirmation_layer) {
     layer_mark_dirty(s_confirmation_layer);
@@ -1394,18 +1774,21 @@ void select_button_up(
   }
 
   if (s_confirmation_state == CONFIRM_COMPLETE) {
-    if (unconfirmed_medication_group_is_due()) {
-      reset_confirmation_image();
-      refresh_app_screen_state();
+    if (s_confirmation_image_active) {
+      s_confirmation_release_pending = true;
+
+      if (
+        s_confirmation_ok_state ==
+            CONFIRM_OK_VISIBLE
+      ) {
+        start_confirmation_ok_bounce_down();
+      }
+
+      schedule_confirmation_timer();
       return;
     }
 
-    if (s_confirmation_symbol_set) {
-      exit_app();
-      return;
-    }
-
-    refresh_app_screen_state();
+    finish_confirmed_release();
     return;
   }
 
