@@ -1,8 +1,8 @@
-# ナース (Nāsu)
+# Nasu
 
 ## Deutsch
 
-**ナース (Nāsu)** ist eine native Medikamenten-Erinnerungs-App für die
+**Nasu** ist eine native Medikamenten-Erinnerungs-App für die
 **Pebble Time 2** (`emery`).
 
 Wenn ein Medikament fällig ist, zeigt die Uhr die konfigurierten
@@ -11,9 +11,9 @@ und wartet auf eine bewusste Bestätigung, bevor die Einnahme als
 erledigt markiert wird.
 
 <p align="center">
-  <img src="docs/screenshots/screenshot.png" width="30%" alt="Nāsu – screenshot">
-  <img src="docs/screenshots/screenshot2.png" width="30%" alt="Nāsu – screenshot2">
-  <img src="docs/screenshots/screenshot3.png" width="30%" alt="Nāsu – screenshot3">
+  <img src="docs/screenshots/screenshot.png" width="30%" alt="Nasu – screenshot">
+  <img src="docs/screenshots/screenshot2.png" width="30%" alt="Nasu – screenshot2">
+  <img src="docs/screenshots/screenshot3.png" width="30%" alt="Nasu – screenshot3">
 </p>
 
 ### Funktionen
@@ -25,7 +25,6 @@ erledigt markiert wird.
 - Einstellbare Tablettenform, Farbe, Größe und Beschriftung
 - Einstellbare Farben für Pen und Akzent
 - Tabletten fallen von oben in den Erinnerungsbildschirm und reagieren danach auf die Bewegung der Uhr
-- Optionales Schweizer Wappen als festes Kollisionshindernis
 - Optionales dezentes japanisches Hintergrundmuster
 - **Gedrückthalten zum Bestätigen**
 - Scrollen per Touch und Tasten
@@ -39,7 +38,7 @@ erledigt markiert wird.
 
 ### Funktionsweise
 
-Wird ein Medikament fällig, öffnet Nāsu einen eigenen
+Wird ein Medikament fällig, öffnet Nasu einen eigenen
 Erinnerungsbildschirm.
 
 Tabletten verhalten sich wie kleine physikalische Objekte und reagieren
@@ -77,7 +76,7 @@ Allgemeine Einstellungen:
 - Alarmlautstärke
 - Vibration
 - Erinnerungsintervall
-- Darstellung: Theme, Sprache, Schweizer Wappen und japanisches Hintergrundmuster
+- Darstellung: Theme, Sprache und japanisches Hintergrundmuster
 
 Bei einer frischen Installation richtet sich die Sprache zunächst nach der
 Systemsprache der Pebble. Die Sprache kann anschließend in **Darstellung**
@@ -132,7 +131,7 @@ Weitere Architekturdetails stehen in
 
 ### Medizinischer Hinweis
 
-Nāsu ist ein Komfortwerkzeug und **kein Medizinprodukt**.
+Nasu ist ein Komfortwerkzeug und **kein Medizinprodukt**.
 
 Verlasse dich nicht ausschließlich auf diese App, wenn ein Medikament
 exakt zu einem bestimmten Zeitpunkt eingenommen werden muss oder eine
@@ -141,7 +140,7 @@ haben kann.
 
 ### Lizenz
 
-Nāsu ist freie Software unter der
+Nasu ist freie Software unter der
 **GNU General Public License v3.0**.
 
 Siehe [`LICENSE`](LICENSE).
@@ -150,7 +149,7 @@ Siehe [`LICENSE`](LICENSE).
 
 ## English
 
-**ナース (Nāsu)** is a native medication reminder app for the
+**Nasu** is a native medication reminder app for the
 **Pebble Time 2** (`emery`).
 
 When medication is due, the watch displays the configured pills or
@@ -158,9 +157,9 @@ injection pen, alerts you with sound and/or vibration, and waits for a
 deliberate confirmation before marking it as taken.
 
 <p align="center">
-  <img src="docs/screenshots/screenshot.png" width="30%" alt="Nāsu – screenshot">
-  <img src="docs/screenshots/screenshot2.png" width="30%" alt="Nāsu – screenshot2">
-  <img src="docs/screenshots/screenshot3.png" width="30%" alt="Nāsu – screenshot3">
+  <img src="docs/screenshots/screenshot.png" width="30%" alt="Nasu – screenshot">
+  <img src="docs/screenshots/screenshot2.png" width="30%" alt="Nasu – screenshot2">
+  <img src="docs/screenshots/screenshot3.png" width="30%" alt="Nasu – screenshot3">
 </p>
 
 ### Features
@@ -172,7 +171,6 @@ deliberate confirmation before marking it as taken.
 - Configurable pill shape, color, size and imprint
 - Configurable pen body and accent colors
 - Pills fall into the reminder screen from above and then react to watch movement
-- Optional Swiss emblem as a fixed collision obstacle
 - Optional subtle Japanese background pattern
 - Deliberate **hold-to-confirm** interaction
 - Touch and button scrolling
@@ -186,7 +184,7 @@ deliberate confirmation before marking it as taken.
 
 ### How it works
 
-When medication becomes due, Nāsu opens a dedicated reminder
+When medication becomes due, Nasu opens a dedicated reminder
 screen.
 
 Pills behave like small physical objects and react to movement of the
@@ -223,7 +221,7 @@ General settings include:
 - Alarm volume
 - Vibration
 - Reminder interval
-- Appearance: theme, language, Swiss emblem and Japanese background pattern
+- Appearance: theme, language and Japanese background pattern
 
 On a fresh installation, the app initially follows the Pebble system
 language. Language can then be set manually to German or English under
@@ -278,7 +276,7 @@ More details about the internal structure can be found in
 
 ### Medical disclaimer
 
-Nāsu is a convenience tool and is **not a medical device**.
+Nasu is a convenience tool and is **not a medical device**.
 
 Do not rely on this app as the only safeguard for medication that must
 be taken at an exact time or where a missed or incorrect dose could
@@ -286,7 +284,7 @@ cause harm.
 
 ### License
 
-Nāsu is free software released under the
+Nasu is free software released under the
 **GNU General Public License v3.0**.
 
 See [`LICENSE`](LICENSE).

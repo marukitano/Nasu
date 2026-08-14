@@ -13,9 +13,7 @@ void set_band_layer_x_q8(
 );
 bool step_snap_index(int direction);
 void scroll_to_snap_index(int target_index);
-int scroll_intake_first_snap_index(void);
 int scroll_vespa_snap_index(void);
-int scroll_all_medications_first_snap_index(void);
 int scroll_all_medication_row_for_snap(int snap_index);
 int32_t scroll_vespa_page_top_y(void);
 int32_t scroll_all_medications_page_start_y(void);

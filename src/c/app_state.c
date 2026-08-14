@@ -1,9 +1,5 @@
 #include "app_state.h"
 
-const int8_t s_hint_offsets[8] = {
-  0, 1, 3, 5, 3, 1, 0, 0
-};
-
 DaypartSettings s_dayparts;
 MedicationSettings s_medications[MAX_MEDICATIONS];
 uint8_t s_medication_count;
@@ -11,11 +7,8 @@ MedicationSettings s_pending_medications[MAX_MEDICATIONS];
 uint8_t s_pending_count;
 uint16_t s_pending_received_mask;
 
-char s_row_labels[MAX_LIST_ROWS][MEDICATION_LABEL_LENGTH];
-const char *s_rows[MAX_LIST_ROWS];
-MedicationRowKind s_row_kinds[MAX_LIST_ROWS];
 int8_t s_row_medication_indices[MAX_LIST_ROWS];
-uint8_t s_list_row_count = 1;
+uint8_t s_list_row_count;
 
 int8_t s_intake_medication_indices[MAX_LIST_ROWS];
 uint8_t s_intake_row_count;
@@ -33,8 +26,6 @@ Layer *s_band_layer;
 Layer *s_band_arrow_layer;
 Layer *s_confirmation_layer;
 BandAnimationState s_band;
-GBitmap *s_sheet;
-GBitmap *s_frames[FRAME_COUNT];
 AppTimer *s_ui_timer;
 AppTimer *s_confirmation_timer;
 AppTimer *s_scroll_physics_timer;
@@ -42,16 +33,12 @@ AppTimer *s_band_animation_timer;
 GFont s_medication_font;
 GFont s_medication_detail_font;
 GFont s_header_font;
-int16_t s_frame_width;
-int16_t s_frame_height;
 uint8_t s_animation_tick;
 uint16_t s_medication_marquee_tick;
 int8_t s_medication_marquee_row = -1;
-int8_t s_taken_hint_phase;
 bool s_light_theme;
 ThemeMode s_theme_mode = THEME_MODE_DARK;
 AppLanguage s_language = APP_LANGUAGE_GERMAN;
-bool s_show_swiss_emblem = true;
 bool s_show_japanese_pattern = true;
 bool s_confirmed_screen_active;
 

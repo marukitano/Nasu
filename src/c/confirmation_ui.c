@@ -695,9 +695,6 @@ static void draw_confirmation_checkmark(
     GContext *ctx,
     GRect bounds
 );
-static bool first_unconfirmed_due_symbol(
-    MedicationSymbol *symbol
-);
 static bool selected_confirmation_symbol(
     MedicationSymbol *symbol
 );
@@ -1007,12 +1004,6 @@ void draw_confirmed_page(
   );
 }
 
-static bool first_unconfirmed_due_symbol(
-    MedicationSymbol *symbol
-) {
-  return active_medication_symbol(symbol);
-}
-
 static bool selected_confirmation_symbol(
     MedicationSymbol *symbol
 ) {
@@ -1049,39 +1040,6 @@ static bool confirmation_prompt_is_active(
     return false;
   }
   return true;
-}
-
-void update_taken_button_hint_pulse(void) {
-  if (!confirmation_prompt_is_active(NULL)) {
-    s_taken_hint_phase = -1;
-    return;
-  }
-
-  if (s_taken_hint_phase < 0) {
-    s_taken_hint_phase = 0;
-  } else if (
-    s_taken_hint_phase + 1 <
-    (int)ARRAY_LENGTH(s_hint_offsets)
-  ) {
-    s_taken_hint_phase++;
-  }
-}
-
-void draw_taken_button_hint(
-    GContext *ctx,
-    GRect layer_bounds,
-    GRect frame,
-    GRect canvas_bounds
-) {
-  /*
-   * Der alte visuelle Mitteltasten-Hinweis in der Intake-/Alarm-Liste
-   * wird nicht mehr gezeichnet. Die Bestätigung selbst und ihre
-   * Eingabelogik bleiben unverändert.
-   */
-  (void)ctx;
-  (void)layer_bounds;
-  (void)frame;
-  (void)canvas_bounds;
 }
 
 static int16_t transfer_lerp_int16(
@@ -1508,11 +1466,6 @@ static void confirm_medication_group(
   mark_medication_group_confirmed(symbol);
   alarm_confirmation_received(symbol);
 
-  /*
-   * TODO: Den späteren Wiederholungs-Wakeup nur
-   * für diese Gruppe abbrechen:
-   * Tabletten oder Pen.
-   */
 }
 
 static void finish_confirmed_release(void) {

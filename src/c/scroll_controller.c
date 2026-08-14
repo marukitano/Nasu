@@ -87,15 +87,11 @@ static int scroll_max_snap_index(void) {
   return scroll_vespa_snap_index() + LIST_ROW_COUNT;
 }
 
-int scroll_intake_first_snap_index(void) {
-  return INTAKE_ROW_COUNT > 0 ? 1 : -1;
-}
-
 int scroll_vespa_snap_index(void) {
   return INTAKE_ROW_COUNT + 1;
 }
 
-int scroll_all_medications_first_snap_index(void) {
+static int scroll_all_medications_first_snap_index(void) {
   return scroll_vespa_snap_index() + 1;
 }
 

@@ -1,6 +1,5 @@
 #include <pebble.h>
 
-#include <stdio.h>
 #include <string.h>
 
 #include "app_state.h"
@@ -14,11 +13,6 @@
 #include "confirmation_ui.h"
 #include "medication_ui.h"
 
-static void format_medication_label(
-    const MedicationSettings *medication,
-    char *label,
-    size_t label_size
-);
 static MedicationTime medication_time_for_minute(
     int minute
 );
@@ -37,30 +31,6 @@ void daypart_tick_handler(
     struct tm *tick_time,
     TimeUnits units_changed
 );
-
-static void format_medication_label(
-    const MedicationSettings *medication,
-    char *label,
-    size_t label_size
-) {
-  if (medication->quantity > 1) {
-    snprintf(
-      label,
-      label_size,
-      "%s x%u",
-      medication->name,
-      (unsigned int)medication->quantity
-    );
-    return;
-  }
-
-  snprintf(
-    label,
-    label_size,
-    "%s",
-    medication->name
-  );
-}
 
 static MedicationTime medication_time_for_minute(
     int minute
@@ -314,16 +284,6 @@ void rebuild_all_medication_rows(void) {
       continue;
     }
 
-    format_medication_label(
-      medication,
-      s_row_labels[s_list_row_count],
-      sizeof(s_row_labels[s_list_row_count])
-    );
-
-    s_rows[s_list_row_count] =
-        s_row_labels[s_list_row_count];
-    s_row_kinds[s_list_row_count] =
-        MEDICATION_ROW_ITEM;
     s_row_medication_indices[s_list_row_count] =
         (int8_t)index;
     s_list_row_count++;

@@ -1,19 +1,4 @@
-#include <pebble.h>
-
-#include <stdio.h>
-#include <string.h>
-
-#include "app_state.h"
 #include "app_util.h"
-#include "medication_model.h"
-#include "watch_settings.h"
-#include "medication_alarm.h"
-#include "pill_physics.h"
-#include "pill_renderer.h"
-#include "scroll_controller.h"
-#include "confirmation_ui.h"
-#include "medication_ui.h"
-
 
 void cancel_timer(AppTimer **timer) {
   if (!*timer) {

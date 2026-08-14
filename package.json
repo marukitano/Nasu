@@ -40,17 +40,11 @@
       "SETTINGS_TRANSACTION": 26,
       "SETTINGS_ACK": 27,
       "LANGUAGE": 28,
-      "SHOW_SWISS_EMBLEM": 29,
       "SHOW_JAPANESE_PATTERN": 30
     },
     "projectType": "native",
     "resources": {
       "media": [
-        {
-          "file": "images/pill_rotate_sheet.png",
-          "name": "IMAGE_PILL_SHEET",
-          "type": "bitmap"
-        },
         {
           "file": "images/seigaiha_dark.png",
           "name": "IMAGE_SEIGAIHA_DARK",

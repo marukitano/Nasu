@@ -189,10 +189,6 @@ static bool pill_rb_solve_wall(
     int32_t minimum_y_q8,
     int32_t maximum_y_q8
 );
-static bool pill_rb_solve_swiss_emblem(
-    PillPhysicsBody *body,
-    int16_t arena_y
-);
 static int16_t pill_rb_tilt_magnitude(
     int16_t x,
     int16_t y
@@ -1582,23 +1578,6 @@ static bool pill_rb_solve_wall(
   return true;
 }
 
-/*
- * Fixed collision obstacle around the 13 x 14 emblem at (100,100).
- * Only the pill receives position correction and impulse.
- */
-static bool pill_rb_solve_swiss_emblem(
-    PillPhysicsBody *body,
-    int16_t arena_y
-) {
-  /*
-   * Das ehemalige Schweizer Wappen ist kein Hindernis mehr.
-   * Die restliche Pillenphysik bleibt unverändert.
-   */
-  (void)body;
-  (void)arena_y;
-  return false;
-}
-
 static int16_t pill_rb_tilt_magnitude(
     int16_t x,
     int16_t y
@@ -1869,10 +1848,6 @@ static void pill_physics_tick(void *context) {
         maximum_x_q8,
         minimum_y_q8,
         maximum_y_q8
-      );
-      had_contact |= pill_rb_solve_swiss_emblem(
-        body,
-        arena_y
       );
     }
 

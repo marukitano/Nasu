@@ -41,25 +41,18 @@ static uint8_t s_pill_select_marker_draw_width =
     PILL_SELECT_MARKER_WIDTH;
 static bool s_pill_select_marker_button_down;
 static bool s_pill_select_marker_peak_reached;
+static time_t s_vespa_next_alarm_cache;
+static time_t s_vespa_next_alarm_cache_minute = (time_t)-1;
 static void apply_effective_theme(bool light_theme);
 static void draw_alert_background_pattern(
     GContext *ctx,
     GRect bounds
 );
-static void draw_swiss_emblem(
-    GContext *ctx,
-    int32_t scroll_offset_y
-);
-static void destroy_pill_bitmaps(void);
 static void canvas_update_proc(
     Layer *layer,
     GContext *ctx
 );
 static void cover_scrolled_alert_area(
-    GContext *ctx,
-    GRect bounds
-);
-static void draw_alert_page_button_hint(
     GContext *ctx,
     GRect bounds
 );
@@ -93,7 +86,6 @@ static void scroll_down_handler(
     void *context
 );
 static void click_config_provider(void *context);
-static bool load_pill_sheet(void);
 static void reset_ui_state(GRect bounds);
 static void window_load(Window *window);
 static void window_appear(Window *window);
@@ -129,6 +121,24 @@ bool medication_ui_alarm_navigation_locked(void) {
   return
       s_alarm_navigation_locked &&
       s_alarm_active;
+}
+
+static void invalidate_vespa_next_alarm_cache(void) {
+  s_vespa_next_alarm_cache = 0;
+  s_vespa_next_alarm_cache_minute = (time_t)-1;
+}
+
+static time_t cached_vespa_next_alarm_timestamp(void) {
+  const time_t now = time(NULL);
+  const time_t minute = now / 60;
+
+  if (s_vespa_next_alarm_cache_minute != minute) {
+    s_vespa_next_alarm_cache =
+        alarm_next_timestamp();
+    s_vespa_next_alarm_cache_minute = minute;
+  }
+
+  return s_vespa_next_alarm_cache;
 }
 
 static bool pill_select_marker_page_active(void) {
@@ -398,18 +408,6 @@ void apply_theme_mode(
   pill_physics_update_activity();
 }
 
-void apply_theme(
-    bool light_theme,
-    bool save
-) {
-  apply_theme_mode(
-    light_theme
-        ? THEME_MODE_LIGHT
-        : THEME_MODE_DARK,
-    save
-  );
-}
-
 static void draw_alert_background_pattern(
     GContext *ctx,
     GRect bounds
@@ -466,34 +464,6 @@ static void draw_alert_background_pattern(
   );
 }
 
-/*
- * Exact 13 x 14 Swiss emblem raster from FCK_Gravity.
- * Colors stay GColorRed / GColorWhite. Med Ticker places the same raster at
- * the true display center, matching the middle-button marker at y=114.
- */
-static void draw_swiss_emblem(
-    GContext *ctx,
-    int32_t scroll_offset_y
-) {
-  /* Schweizer Wappen aus der Pillensimulation entfernt. */
-  (void)ctx;
-  (void)scroll_offset_y;
-}
-
-static void destroy_pill_bitmaps(void) {
-  for (uint8_t index = 0; index < FRAME_COUNT; index++) {
-    if (s_frames[index]) {
-      gbitmap_destroy(s_frames[index]);
-      s_frames[index] = NULL;
-    }
-  }
-
-  if (s_sheet) {
-    gbitmap_destroy(s_sheet);
-    s_sheet = NULL;
-  }
-}
-
 int32_t pill_arena_origin_y(void) {
   if (!s_canvas_layer) {
     return 0;
@@ -509,13 +479,13 @@ int32_t pill_arena_origin_y(void) {
         (
           int32_t
         )bounds.size.h -
-        s_frame_height
+        PILL_ARENA_HEIGHT
       ) /
       2 +
       CANVAS_START_OFFSET_Y;
 }
 
-int32_t current_pill_y(void) {
+static int32_t current_pill_y(void) {
   return
       pill_arena_origin_y() +
       visual_canvas_offset_y();
@@ -555,26 +525,13 @@ static void cover_scrolled_alert_area(
   );
 }
 
-static void draw_alert_page_button_hint(
-    GContext *ctx,
-    GRect bounds
-) {
-  /*
-   * Alter Mitteltasten-Hinweis entfernt.
-   * Die Bestätigung wird inzwischen durch die OK-Animation erklärt;
-   * der weiße Halbkreis am rechten Displayrand ist daher nicht mehr nötig.
-   */
-  (void)ctx;
-  (void)bounds;
-}
-
 static void draw_vespa_next_alarm_bubble(
     GContext *ctx,
     GRect bounds,
     int32_t vespa_top
 ) {
   const time_t next_alarm =
-      alarm_next_timestamp();
+      cached_vespa_next_alarm_timestamp();
 
   if (next_alarm <= 0) {
     return;
@@ -690,7 +647,7 @@ static void canvas_update_proc(
 
   draw_alert_background_pattern(ctx, bounds);
 
-  if (!s_confirmed_screen_active && s_sheet) {
+  if (!s_confirmed_screen_active) {
     const int32_t pill_y = current_pill_y();
     MedicationSymbol active_symbol;
     const bool pen_alert_active =
@@ -702,14 +659,14 @@ static void canvas_update_proc(
         ctx,
         bounds,
         scroll_offset_y,
-        (uint8_t)(s_animation_tick / PILL_TICKS_PER_FRAME),
+        (uint8_t)(s_animation_tick /
+                  ALERT_ANIMATION_TICKS_PER_FRAME),
         theme_foreground_color()
       );
     } else {
       draw_physics_pills(ctx, bounds, pill_y);
     }
 
-    draw_swiss_emblem(ctx, scroll_offset_y);
   }
 
   cover_scrolled_alert_area(ctx, bounds);
@@ -873,12 +830,6 @@ static void band_update_proc(
     theme_foreground_color()
   );
 
-  draw_taken_button_hint(
-    ctx,
-    layer_bounds,
-    frame,
-    canvas_bounds
-  );
 }
 
 static void sync_medication_marquee(
@@ -894,8 +845,7 @@ static void sync_medication_marquee(
     const int row_index =
         scroll_all_medication_row_for_snap(s_scroll.snap_index);
 
-    if (row_index >= 0 && row_index < LIST_ROW_COUNT &&
-        s_row_kinds[row_index] == MEDICATION_ROW_ITEM) {
+    if (row_index >= 0 && row_index < LIST_ROW_COUNT) {
       active_row = (int8_t)row_index;
     }
   }
@@ -928,9 +878,9 @@ static void ui_timer_callback(void *context) {
     if (!s_confirmed_screen_active) {
       s_animation_tick =
           (s_animation_tick + 1) %
-          (FRAME_COUNT * PILL_TICKS_PER_FRAME);
+          (ALERT_ANIMATION_FRAME_COUNT *
+           ALERT_ANIMATION_TICKS_PER_FRAME);
 
-      update_taken_button_hint_pulse();
     }
 
     sync_medication_marquee(true);
@@ -1144,64 +1094,12 @@ static void click_config_provider(void *context) {
   );
 }
 
-static bool load_pill_sheet(void) {
-  s_sheet = gbitmap_create_with_resource(
-    RESOURCE_ID_IMAGE_PILL_SHEET
-  );
-
-  if (!s_sheet) {
-    APP_LOG(
-      APP_LOG_LEVEL_ERROR,
-      "Spritesheet could not be loaded"
-    );
-    return false;
-  }
-
-  const GRect bounds = gbitmap_get_bounds(s_sheet);
-
-  if (bounds.size.w % FRAME_COUNT != 0) {
-    APP_LOG(
-      APP_LOG_LEVEL_ERROR,
-      "Spritesheet width is invalid"
-    );
-    destroy_pill_bitmaps();
-    return false;
-  }
-
-  s_frame_width = bounds.size.w / FRAME_COUNT;
-  s_frame_height = bounds.size.h;
-
-  for (uint8_t index = 0; index < FRAME_COUNT; index++) {
-    s_frames[index] = gbitmap_create_as_sub_bitmap(
-      s_sheet,
-      GRect(
-        index * s_frame_width,
-        0,
-        s_frame_width,
-        s_frame_height
-      )
-    );
-
-    if (!s_frames[index]) {
-      APP_LOG(
-        APP_LOG_LEVEL_ERROR,
-        "Pill frame could not be created"
-      );
-      destroy_pill_bitmaps();
-      return false;
-    }
-  }
-
-  return true;
-}
-
 static void reset_ui_state(GRect bounds) {
   reset_pill_select_marker_animation();
 
   s_animation_tick = 0;
   s_medication_marquee_tick = 0;
   s_medication_marquee_row = -1;
-  s_taken_hint_phase = -1;
 
   const int initial_snap_index =
       medication_ui_alarm_navigation_locked()
@@ -1250,6 +1148,7 @@ void refresh_app_screen_state(void) {
     return;
   }
 
+  invalidate_vespa_next_alarm_cache();
   cancel_timer(&s_alarm_screen_timer);
   reset_medication_confirmations();
 
@@ -1301,10 +1200,6 @@ static void window_load(Window *window) {
       fonts_get_system_font(FONT_KEY_GOTHIC_18);
   s_header_font =
       fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
-
-  if (!load_pill_sheet()) {
-    return;
-  }
 
   s_alert_pattern_dark_bitmap =
       gbitmap_create_with_resource(
@@ -1487,8 +1382,6 @@ static void window_unload(Window *window) {
     );
     s_alert_pattern_light_bitmap = NULL;
   }
-
-  destroy_pill_bitmaps();
 
   if (s_confirmation_layer) {
     layer_destroy(s_confirmation_layer);

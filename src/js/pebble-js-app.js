@@ -39,7 +39,6 @@ var MED_EFFECT_KEY = 25;
 var SETTINGS_TRANSACTION_KEY = 26;
 var SETTINGS_ACK_KEY = 27;
 var LANGUAGE_KEY = 28;
-var SHOW_SWISS_EMBLEM_KEY = 29;
 var SHOW_JAPANESE_PATTERN_KEY = 30;
 
 
@@ -149,9 +148,6 @@ function currentLanguage() {
 
 function normalizeDisplaySettings(value) {
   return {
-    showEmblem:
-        !value ||
-        value.showEmblem !== false,
     showPattern:
         !value ||
         value.showPattern !== false
@@ -747,8 +743,6 @@ function sendAllSettings(
       theme === 'light' ? 1 : 0;
   commitSettings[LANGUAGE_KEY] =
       language === 'en' ? 1 : 0;
-  commitSettings[SHOW_SWISS_EMBLEM_KEY] =
-      display.showEmblem ? 1 : 0;
   commitSettings[SHOW_JAPANESE_PATTERN_KEY] =
       display.showPattern ? 1 : 0;
   commitSettings[DAYPART_MORNING_KEY] =
@@ -855,8 +849,6 @@ function configurationPage(
       alarmSettings.vibrationEnabled ? ' checked' : '';
   var displaySettings =
       normalizeDisplaySettings(display);
-  var emblemChecked =
-      displaySettings.showEmblem ? ' checked' : '';
   var patternChecked =
       displaySettings.showPattern ? ' checked' : '';
   var reminderIntervalSlider =
@@ -1045,7 +1037,6 @@ function configurationPage(
     '<option value="en"' + englishSelected + '>English</option>',
     '</select>',
     '</label>',
-    '<label class="check alarm-check"><input id="show-emblem" type="checkbox"' + emblemChecked + '><span>Schweizer Wappen</span></label>',
     '<label class="check alarm-check"><input id="show-pattern" type="checkbox"' + patternChecked + '><span>Japanisches Muster</span></label>',
     '</div>',
     '</section>',
@@ -1492,7 +1483,7 @@ function configurationPage(
     'for(var medicationIndex=0;medicationIndex<medications.length;medicationIndex++){',
     'if(medications[medicationIndex].enabled&&!medications[medicationIndex].iconSet){alert(tr("Ein aktives Medikament benötigt ein vollständiges Icon.","An active medication requires a complete icon."));return;}',
     '}',
-    'var result={theme:document.getElementById("theme").value,language:document.getElementById("language").value,dayparts:values,medications:medications,alarm:{audioEnabled:document.getElementById("audio-enabled").checked,audioVolume:parseInt(document.getElementById("audio-volume").value,10),vibrationEnabled:document.getElementById("vibration-enabled").checked,reminderInterval:reminderIntervals[parseInt(document.getElementById("reminder-interval").value,10)]},display:{showEmblem:document.getElementById("show-emblem").checked,showPattern:document.getElementById("show-pattern").checked}};',
+    'var result={theme:document.getElementById("theme").value,language:document.getElementById("language").value,dayparts:values,medications:medications,alarm:{audioEnabled:document.getElementById("audio-enabled").checked,audioVolume:parseInt(document.getElementById("audio-volume").value,10),vibrationEnabled:document.getElementById("vibration-enabled").checked,reminderInterval:reminderIntervals[parseInt(document.getElementById("reminder-interval").value,10)]},display:{showPattern:document.getElementById("show-pattern").checked}};',
     'document.location="pebblejs://close#"+encodeURIComponent(JSON.stringify(result));',
     '};',
     'window.__timeToMinutes=' + timeToMinutes.toString() + ';',

@@ -15,12 +15,6 @@ void draw_confirmed_page(
     GContext *ctx,
     GRect bounds
 );
-void draw_taken_button_hint(
-    GContext *ctx,
-    GRect layer_bounds,
-    GRect frame,
-    GRect canvas_bounds
-);
 void schedule_transfer_close(void);
 void select_button_down(
     ClickRecognizerRef recognizer,
@@ -31,4 +25,3 @@ void select_button_up(
     void *context
 );
 void show_transfer_screen(void);
-void update_taken_button_hint_pulse(void);

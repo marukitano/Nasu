@@ -2338,32 +2338,6 @@ void draw_medications(
       continue;
     }
 
-    if (
-      s_row_kinds[index] !=
-          MEDICATION_ROW_ITEM
-    ) {
-      graphics_draw_text(
-        ctx,
-        s_rows[index],
-        s_medication_font,
-        GRect(
-          bounds.origin.x + 8,
-          (int16_t)row_y +
-              (
-                MEDICATION_ROW_HEIGHT -
-                MEDICATION_NAME_LINE_HEIGHT
-              ) /
-              2,
-          bounds.size.w - 16,
-          MEDICATION_NAME_LINE_HEIGHT
-        ),
-        GTextOverflowModeTrailingEllipsis,
-        GTextAlignmentCenter,
-        NULL
-      );
-      continue;
-    }
-
     const int8_t medication_index =
         s_row_medication_indices[index];
 

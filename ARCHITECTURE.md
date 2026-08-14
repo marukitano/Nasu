@@ -26,12 +26,10 @@ The watch application is split into ordinary, separately compiled C modules.
 ## Shared types and compatibility state
 
 `app_types.h` contains constants and data structures used by more than one
-module. `app_state.c/.h` temporarily holds mutable state that was previously
-`static` in the old `main.c`.
+module. `app_state.c/.h` holds shared mutable runtime state.
 
-`app_state.h` is an internal header: module consumers should use the focused
-module headers instead. The next architecture pass can move state from
-`app_state` into its owning module without changing lifecycle wiring.
+`app_state.h` is an internal header; module consumers should prefer the
+focused module headers where an API is available.
 
 ## Lifecycle
 
@@ -48,4 +46,5 @@ AppMessage callbacks.
 
 ## Phone-side code
 
-`src/js/pebble-js-app.js` was not modified by this refactor.
+`src/js/pebble-js-app.js` owns the companion configuration page, local
+settings storage and the transactional AppMessage transfer to the watch.

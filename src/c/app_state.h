@@ -2,8 +2,6 @@
 
 #include "app_types.h"
 
-extern const int8_t s_hint_offsets[8];
-
 extern DaypartSettings s_dayparts;
 extern MedicationSettings s_medications[MAX_MEDICATIONS];
 extern uint8_t s_medication_count;
@@ -11,9 +9,6 @@ extern MedicationSettings s_pending_medications[MAX_MEDICATIONS];
 extern uint8_t s_pending_count;
 extern uint16_t s_pending_received_mask;
 
-extern char s_row_labels[MAX_LIST_ROWS][MEDICATION_LABEL_LENGTH];
-extern const char *s_rows[MAX_LIST_ROWS];
-extern MedicationRowKind s_row_kinds[MAX_LIST_ROWS];
 extern int8_t s_row_medication_indices[MAX_LIST_ROWS];
 extern uint8_t s_list_row_count;
 
@@ -35,8 +30,6 @@ extern Layer *s_band_layer;
 extern Layer *s_band_arrow_layer;
 extern Layer *s_confirmation_layer;
 extern BandAnimationState s_band;
-extern GBitmap *s_sheet;
-extern GBitmap *s_frames[FRAME_COUNT];
 extern AppTimer *s_ui_timer;
 extern AppTimer *s_confirmation_timer;
 extern AppTimer *s_scroll_physics_timer;
@@ -44,16 +37,12 @@ extern AppTimer *s_band_animation_timer;
 extern GFont s_medication_font;
 extern GFont s_medication_detail_font;
 extern GFont s_header_font;
-extern int16_t s_frame_width;
-extern int16_t s_frame_height;
 extern uint8_t s_animation_tick;
 extern uint16_t s_medication_marquee_tick;
 extern int8_t s_medication_marquee_row;
-extern int8_t s_taken_hint_phase;
 extern bool s_light_theme;
 extern ThemeMode s_theme_mode;
 extern AppLanguage s_language;
-extern bool s_show_swiss_emblem;
 extern bool s_show_japanese_pattern;
 extern bool s_confirmed_screen_active;
 

@@ -6,21 +6,12 @@
 #include <stdint.h>
 #include <time.h>
 
-#define FRAME_COUNT 8
+#define ALERT_ANIMATION_FRAME_COUNT 8
 #define UI_TICK_MS 110
-#define PILL_TICKS_PER_FRAME 2
+#define ALERT_ANIMATION_TICKS_PER_FRAME 2
 
 #define CANVAS_START_OFFSET_Y 0
-
-/*
- * Same 13 x 14 pixel emblem geometry as FCK_Gravity, but centered on the
- * Emery display. y=114 is exactly the height of the middle-button marker.
- */
-#define SWISS_EMBLEM_PIVOT_X 100
-#define SWISS_EMBLEM_PIVOT_Y 114
-#define SWISS_EMBLEM_WIDTH 13
-#define SWISS_EMBLEM_HEIGHT 14
-#define SWISS_EMBLEM_COLLISION_RADIUS 7
+#define PILL_ARENA_HEIGHT 128
 
 #define SCROLL_Q8 256
 #define SCROLL_FRAME_MS 16
@@ -101,40 +92,12 @@
 #define MEDICATION_MARQUEE_END_PAUSE_TICKS 6
 #define MEDICATION_MARQUEE_PIXELS_PER_TICK 2
 
-/*
- * The alert and medication views are two complete stacked pages.
- * Page 0 occupies one full screen. Page 1 starts exactly one screen below it,
- * with its first row centered vertically.
- */
-#define MEDICATION_PAGE_FIRST_ROW_TOP(screen_height) \
-  ( \
-    (screen_height) + \
-    ((screen_height) - MEDICATION_ROW_HEIGHT) / 2 \
-  )
-#define MEDICATION_PAGE_HEADER_TOP(screen_height) \
-  ( \
-    MEDICATION_PAGE_FIRST_ROW_TOP(screen_height) - \
-    MEDICATION_HEADER_HEIGHT \
-  )
-#define MEDICATION_PAGE_ROW_TOP(screen_height, row_index) \
-  ( \
-    MEDICATION_PAGE_FIRST_ROW_TOP(screen_height) + \
-    (row_index) * \
-        (MEDICATION_ROW_HEIGHT + MEDICATION_ROW_GAP) \
-  )
-#define MEDICATION_PAGE_SNAP_OFFSET(screen_height, row_index) \
-  ( \
-    -(screen_height) - \
-    (row_index) * \
-        (MEDICATION_ROW_HEIGHT + MEDICATION_ROW_GAP) \
-  )
 #define MEDICATION_ICON_SIZE 30
 #define MEDICATION_ICON_LEFT 10
 #define MEDICATION_ICON_TEXT_X 46
 #define MEDICATION_ICON_TEXT_RIGHT 8
 #define BAND_OVERSHOOT_COVER_PX 32
 #define BAND_ARROW_WIDTH 18
-#define TAKEN_HINT_MIN_RADIUS 5
 
 #define THEME_PERSIST_KEY 200
 #define LEGACY_MEDICATION_PERSIST_KEY 201
@@ -149,7 +112,7 @@
 #define MEDICATION_EFFECT_LENGTH 32
 #define MEDICATION_LABEL_LENGTH 48
 #define MAX_MEDICATIONS 8
-#define MAX_LIST_ROWS (MAX_MEDICATIONS + 2)
+#define MAX_LIST_ROWS MAX_MEDICATIONS
 
 #define DAYPART_PERSIST_KEY 204
 #define ALARM_AUDIO_VOLUME_PERSIST_KEY 205
@@ -157,7 +120,6 @@
 #define ALARM_INTERVAL_PERSIST_KEY 207
 #define ALARM_WINDOW_STATE_PERSIST_KEY 208
 #define LANGUAGE_PERSIST_KEY 209
-#define SHOW_SWISS_EMBLEM_PERSIST_KEY 211
 #define SHOW_JAPANESE_PATTERN_PERSIST_KEY 212
 #define DAYPART_MINUTES_PER_DAY 1440
 #define LEGACY_DEFAULT_MORNING_START_MINUTE (5 * 60)
@@ -256,12 +218,6 @@ typedef enum {
 } MedicationSymbol;
 
 #define LEGACY_MEDICATION_SYMBOL_TUBE 2
-
-typedef enum {
-  MEDICATION_ROW_ITEM,
-  MEDICATION_ROW_CONFIRM_PILLS,
-  MEDICATION_ROW_CONFIRM_PEN
-} MedicationRowKind;
 
 typedef struct {
   char name[MEDICATION_NAME_LENGTH];
