@@ -29,7 +29,7 @@ static const VibePattern s_impact_vibration_pattern = {
 #define CONFIRM_IMAGE_CHUNK_BYTES \
   (CONFIRM_IMAGE_WIDTH * CONFIRM_IMAGE_ROWS_PER_CHUNK)
 
-#define CONFIRM_OK_BOUNCE_IN_MS 540
+#define CONFIRM_OK_BOUNCE_IN_MS 1950
 #define CONFIRM_OK_BOUNCE_DOWN_MS 450
 #define CONFIRM_OK_RELEASE_SETTLE_Y 52
 #define CONFIRM_OK_PROGRESS_MAX 1000
@@ -42,6 +42,7 @@ typedef enum {
   CONFIRM_OK_BOUNCING_IN,
   CONFIRM_OK_VISIBLE,
   CONFIRM_OK_ACCEPTING,
+  CONFIRM_OK_BOUNCING_UP,
   CONFIRM_OK_BOUNCING_DOWN
 } ConfirmationOkState;
 
@@ -626,6 +627,33 @@ static void start_confirmation_ok_bounce_down(void) {
   s_confirmation_ok_elapsed_ms = 0;
   s_confirmation_ok_offset_y = 0;
   s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
+}
+
+static void start_confirmation_ok_bounce_up(void) {
+  if (
+    s_confirmation_ok_state != CONFIRM_OK_BOUNCING_IN &&
+    s_confirmation_ok_state != CONFIRM_OK_VISIBLE
+  ) {
+    return;
+  }
+
+  /*
+   * Zu früh losgelassen:
+   * dieselbe Einflugkurve exakt rückwärts abspielen.
+   * Während des Einfliegens bleibt der aktuelle Zeitstand erhalten.
+   * Liegt das OK schon mittig, starten wir am Ende der Einflugkurve.
+   */
+  if (s_confirmation_ok_state == CONFIRM_OK_VISIBLE) {
+    s_confirmation_ok_elapsed_ms = CONFIRM_OK_BOUNCE_IN_MS;
+  } else if (
+    s_confirmation_ok_elapsed_ms > CONFIRM_OK_BOUNCE_IN_MS
+  ) {
+    s_confirmation_ok_elapsed_ms = CONFIRM_OK_BOUNCE_IN_MS;
+  }
+
+  s_confirmation_ok_state = CONFIRM_OK_BOUNCING_UP;
+  s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
+  s_confirmation_release_pending = false;
 }
 
 static void start_confirmation_ok_accept_feedback(void) {
@@ -1548,6 +1576,7 @@ static bool confirmation_animation_active(void) {
       s_check_state == CHECK_SETTLING ||
       s_confirmation_ok_state == CONFIRM_OK_BOUNCING_IN ||
       s_confirmation_ok_state == CONFIRM_OK_ACCEPTING ||
+      s_confirmation_ok_state == CONFIRM_OK_BOUNCING_UP ||
       s_confirmation_ok_state == CONFIRM_OK_BOUNCING_DOWN;
 }
 
@@ -1646,8 +1675,43 @@ static void update_confirmation_ok(void) {
   if (
     s_confirmation_ok_state != CONFIRM_OK_BOUNCING_IN &&
     s_confirmation_ok_state != CONFIRM_OK_ACCEPTING &&
+    s_confirmation_ok_state != CONFIRM_OK_BOUNCING_UP &&
     s_confirmation_ok_state != CONFIRM_OK_BOUNCING_DOWN
   ) {
+    return;
+  }
+
+  /*
+   * Beim Abbruch zählt exakt derselbe Zeitparameter rückwärts.
+   * Dadurch läuft confirmation_ok_bounce_in_offset() wirklich rückwärts
+   * statt durch eine neue, ähnlich aussehende Animation ersetzt zu werden.
+   */
+  if (s_confirmation_ok_state == CONFIRM_OK_BOUNCING_UP) {
+    if (
+      s_confirmation_ok_elapsed_ms > CONFIRM_ANIMATION_INTERVAL_MS
+    ) {
+      s_confirmation_ok_elapsed_ms -= CONFIRM_ANIMATION_INTERVAL_MS;
+    } else {
+      s_confirmation_ok_elapsed_ms = 0;
+    }
+
+    uint16_t progress = 0;
+
+    if (CONFIRM_OK_BOUNCE_IN_MS > 0) {
+      progress = (uint16_t)(
+        ((uint32_t)s_confirmation_ok_elapsed_ms *
+         CONFIRM_OK_PROGRESS_MAX) /
+        CONFIRM_OK_BOUNCE_IN_MS
+      );
+    }
+
+    s_confirmation_ok_offset_y =
+        confirmation_ok_bounce_in_offset(progress);
+
+    if (s_confirmation_ok_elapsed_ms == 0) {
+      reset_confirmation_image();
+    }
+
     return;
   }
 
@@ -1663,7 +1727,8 @@ static void update_confirmation_ok(void) {
       );
     }
 
-    s_confirmation_ok_offset_y = confirmation_ok_bounce_in_offset(progress);
+    s_confirmation_ok_offset_y =
+        confirmation_ok_bounce_in_offset(progress);
 
     if (progress >= CONFIRM_OK_PROGRESS_MAX) {
       s_confirmation_ok_offset_y = 0;
@@ -1692,6 +1757,7 @@ static void update_confirmation_ok(void) {
     }
 
     uint16_t extra_scale;
+
     if (progress <= 500) {
       extra_scale = (uint16_t)(
         ((uint32_t)CONFIRM_OK_ACCEPT_EXTRA_SCALE_Q8 * progress) / 500
@@ -1703,7 +1769,8 @@ static void update_confirmation_ok(void) {
       );
     }
 
-    s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8 + extra_scale;
+    s_confirmation_ok_scale_q8 =
+        CONFIRM_OK_SCALE_Q8 + extra_scale;
 
     if (progress >= CONFIRM_OK_PROGRESS_MAX) {
       s_confirmation_ok_scale_q8 = CONFIRM_OK_SCALE_Q8;
@@ -1727,7 +1794,8 @@ static void update_confirmation_ok(void) {
     );
   }
 
-  s_confirmation_ok_offset_y = confirmation_ok_bounce_down_offset(progress);
+  s_confirmation_ok_offset_y =
+      confirmation_ok_bounce_down_offset(progress);
 
   if (progress >= CONFIRM_OK_PROGRESS_MAX) {
     s_confirmation_ok_offset_y = CONFIRM_IMAGE_HEIGHT + 16;
@@ -1986,6 +2054,11 @@ void select_button_up(
     return;
   }
 
+  /*
+   * Eine bereits angenommene Bestätigung bleibt unverändert:
+   * Pop/Vibration sind schon passiert, beim Loslassen geht das OK wie
+   * bisher nach unten aus dem Bild.
+   */
   if (s_confirmation_state == CONFIRM_COMPLETE) {
     if (s_confirmation_image_active) {
       s_confirmation_release_pending = true;
@@ -2002,6 +2075,29 @@ void select_button_up(
     }
 
     finish_confirmed_release();
+    return;
+  }
+
+  /*
+   * Bildbestätigung noch NICHT angenommen:
+   * unabhängig davon, wie weit der Confirmation-Kreis schon gewachsen ist,
+   * dreht das OK beim Loslassen sofort an seiner aktuellen Position um.
+   */
+  if (
+    s_confirmation_image_active &&
+    (
+      s_confirmation_ok_state == CONFIRM_OK_BOUNCING_IN ||
+      s_confirmation_ok_state == CONFIRM_OK_VISIBLE
+    )
+  ) {
+    s_confirm_radius = 0;
+    s_confirmation_state = CONFIRM_IDLE;
+    s_confirmation_symbol_set = false;
+    s_check_size = 0;
+    s_check_state = CHECK_HIDDEN;
+
+    start_confirmation_ok_bounce_up();
+    schedule_confirmation_timer();
     return;
   }
 

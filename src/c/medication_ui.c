@@ -45,6 +45,11 @@ static void draw_alert_page_button_hint(
     GContext *ctx,
     GRect bounds
 );
+static void draw_vespa_next_alarm_bubble(
+    GContext *ctx,
+    GRect bounds,
+    int32_t vespa_top
+);
 static void band_arrow_update_proc(
     Layer *layer,
     GContext *ctx
@@ -412,31 +417,118 @@ static void draw_alert_page_button_hint(
     GContext *ctx,
     GRect bounds
 ) {
-  if (
-    s_scroll.snap_index != 0 ||
-    s_confirmation_state != CONFIRM_IDLE ||
-    !unconfirmed_medication_group_is_due()
-  ) {
+  /*
+   * Alter Mitteltasten-Hinweis entfernt.
+   * Die Bestätigung wird inzwischen durch die OK-Animation erklärt;
+   * der weiße Halbkreis am rechten Displayrand ist daher nicht mehr nötig.
+   */
+  (void)ctx;
+  (void)bounds;
+}
+
+static void draw_vespa_next_alarm_bubble(
+    GContext *ctx,
+    GRect bounds,
+    int32_t vespa_top
+) {
+  const time_t next_alarm =
+      alarm_next_timestamp();
+
+  if (next_alarm <= 0) {
     return;
   }
 
+  struct tm *local_ptr =
+      localtime(&next_alarm);
+
+  if (!local_ptr) {
+    return;
+  }
+
+  const struct tm local = *local_ptr;
+  char time_text[8];
+
+  snprintf(
+    time_text,
+    sizeof(time_text),
+    "%02d:%02d",
+    local.tm_hour,
+    local.tm_min
+  );
+
+  char vertical_text[16];
+
+  snprintf(
+    vertical_text,
+    sizeof(vertical_text),
+    "%c\n%c\n%c\n%c\n%c",
+    time_text[0],
+    time_text[1],
+    time_text[2],
+    time_text[3],
+    time_text[4]
+  );
+
   /*
-   * Kleiner Hinweis auf die mittlere Seitentaste.
-   * x == bounds.size.w liegt genau einen Pixel rechts
-   * vom letzten sichtbaren Pixel. Radius 4 ergibt auf
-   * Pebble einen Kreis von praktisch 9 px Durchmesser.
+   * Links und oben jeweils exakt 10 px Abstand.
+   * Keine Spitze: nur die abgerundete Sprechblase.
    */
+  const GRect bubble_rect = GRect(
+    bounds.origin.x + 10,
+    (int16_t)(vespa_top + 10),
+    46,
+    122
+  );
+
+  /*
+   * Außen schwarz, innen weiß: runde Kontur ohne zusätzliche API.
+   */
+  graphics_context_set_fill_color(
+    ctx,
+    GColorBlack
+  );
+  graphics_fill_rect(
+    ctx,
+    bubble_rect,
+    18,
+    GCornersAll
+  );
+
   graphics_context_set_fill_color(
     ctx,
     GColorWhite
   );
-  graphics_fill_circle(
+  graphics_fill_rect(
     ctx,
-    GPoint(
-      bounds.origin.x + bounds.size.w,
-      bounds.origin.y + bounds.size.h / 2
+    GRect(
+      bubble_rect.origin.x + 2,
+      bubble_rect.origin.y + 2,
+      bubble_rect.size.w - 4,
+      bubble_rect.size.h - 4
     ),
-    8
+    16,
+    GCornersAll
+  );
+
+  graphics_context_set_text_color(
+    ctx,
+    GColorBlack
+  );
+  graphics_draw_text(
+    ctx,
+    vertical_text,
+    fonts_get_system_font(
+      FONT_KEY_GOTHIC_18_BOLD
+    ),
+    GRect(
+      bubble_rect.origin.x,
+      bubble_rect.origin.y + 9,
+      bubble_rect.size.w,
+      bubble_rect.size.h - 12
+    ),
+    GTextOverflowModeTrailingEllipsis,
+    GTextAlignmentCenter,
+    NULL
   );
 }
 
@@ -521,6 +613,11 @@ static void canvas_update_proc(
         bounds.size.w,
         bounds.size.h
       )
+    );
+    draw_vespa_next_alarm_bubble(
+      ctx,
+      bounds,
+      vespa_top
     );
   }
 

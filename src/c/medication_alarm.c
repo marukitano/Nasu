@@ -720,6 +720,10 @@ static time_t next_alarm_timestamp_after(time_t now) {
   return next_due_window_start_after(now);
 }
 
+time_t alarm_next_timestamp(void) {
+  return next_alarm_timestamp_after(time(NULL));
+}
+
 void schedule_next_alarm_wakeup(void) {
   wakeup_cancel_all();
 
