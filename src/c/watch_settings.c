@@ -50,6 +50,15 @@ static bool s_settings_reset_verified;
 static bool s_settings_ack_outbox_pending;
 static AppTimer *s_settings_ack_retry_timer;
 
+static MedicationSettings
+    s_pending_medications[MAX_MEDICATIONS];
+static uint8_t s_pending_count;
+static uint16_t s_pending_received_mask;
+static MedicationAppearance
+    s_pending_medication_appearances[MAX_MEDICATIONS];
+static uint8_t s_pending_medication_appearance_count;
+static uint16_t s_pending_medication_appearance_mask;
+
 static void clear_settings_ack_state(void);
 static void schedule_settings_ack_retry(void);
 static void send_settings_ack(void);

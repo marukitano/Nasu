@@ -60,6 +60,13 @@ static int16_t s_confirmation_ok_offset_y;
 static uint16_t s_confirmation_ok_scale_q8;
 static bool s_confirmation_release_pending;
 
+static AppTimer *s_confirmation_timer;
+static AppTimer *s_transfer_close_timer;
+static AppTimer *s_transfer_animation_timer;
+static TransferAnimationState s_transfer_animation_state;
+static uint16_t s_transfer_animation_elapsed_ms;
+static int16_t s_transfer_fall_offset;
+
 static uint16_t integer_sqrt_u32(uint32_t value) {
   uint32_t remainder = value;
   uint32_t result = 0;
@@ -687,10 +694,6 @@ static void draw_checkmark(
     int16_t size,
     int16_t radius
 );
-static void draw_static_checkmark(
-    GContext *ctx,
-    GRect bounds
-);
 static void draw_confirmation_checkmark(
     GContext *ctx,
     GRect bounds
@@ -848,54 +851,6 @@ static void draw_checkmark(
     end,
     radius
   );
-}
-
-static void draw_static_checkmark(
-    GContext *ctx,
-    GRect bounds
-) {
-  const int16_t size = CHECK_POP_SETTLE_SIZE;
-  const int16_t radius = CHECK_STROKE_RADIUS;
-  const int16_t center_x =
-      bounds.origin.x +
-      bounds.size.w / 2;
-  const int16_t center_y =
-      bounds.origin.y +
-      bounds.size.h / 2;
-
-  const GPoint start = GPoint(
-    center_x - (size * 42) / 100,
-    center_y
-  );
-  const GPoint middle = GPoint(
-    center_x - (size * 10) / 100,
-    center_y + (size * 28) / 100
-  );
-  const GPoint end = GPoint(
-    center_x + (size * 45) / 100,
-    center_y - (size * 30) / 100
-  );
-
-  /*
-   * The animated checkmark is rasterized as many overlapping circles.
-   * That is acceptable for a short confirmation animation, but far too
-   * expensive for the 16 ms touch-scroll redraw loop. The static page uses
-   * two thick strokes and only three circles for rounded joins and caps.
-   */
-  graphics_context_set_stroke_color(ctx, GColorWhite);
-  graphics_context_set_stroke_width(
-    ctx,
-    (uint8_t)(radius * 2)
-  );
-  graphics_draw_line(ctx, start, middle);
-  graphics_draw_line(ctx, middle, end);
-
-  graphics_context_set_fill_color(ctx, GColorWhite);
-  graphics_fill_circle(ctx, start, radius);
-  graphics_fill_circle(ctx, middle, radius);
-  graphics_fill_circle(ctx, end, radius);
-
-  graphics_context_set_stroke_width(ctx, 1);
 }
 
 static void draw_confirmation_checkmark(
@@ -1538,7 +1493,7 @@ static void update_confirmation_circle(void) {
       s_check_state = CHECK_POPPING_OUT;
     }
 
-    cancel_timer(&s_ui_timer);
+    medication_ui_pause_animation_timer();
 
     if (s_confirmation_symbol_set) {
       confirm_medication_group(
@@ -1794,6 +1749,15 @@ void select_button_down(
   s_check_size = 0;
   s_check_state = CHECK_HIDDEN;
   schedule_confirmation_timer();
+}
+
+void confirmation_cancel_animation(void) {
+  cancel_timer(&s_confirmation_timer);
+}
+
+void confirmation_cancel_transfer_timers(void) {
+  cancel_timer(&s_transfer_close_timer);
+  cancel_timer(&s_transfer_animation_timer);
 }
 
 static void exit_app(void) {
@@ -2074,7 +2038,7 @@ void show_transfer_screen(void) {
 
   pill_physics_update_activity();
 
-  cancel_timer(&s_ui_timer);
+  medication_ui_pause_animation_timer();
   cancel_timer(&s_confirmation_timer);
   cancel_timer(&s_band_animation_timer);
   cancel_scroll_physics();

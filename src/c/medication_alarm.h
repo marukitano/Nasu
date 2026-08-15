@@ -20,6 +20,7 @@ void alarm_stop(void);
 uint8_t alarm_unconfirmed_symbol_mask_at(
     time_t timestamp
 );
+bool alarm_intake_navigation_lock_required(void);
 time_t alarm_next_timestamp(void);
 void apply_alarm_settings(
     uint8_t volume,

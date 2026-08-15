@@ -39,6 +39,20 @@ static const int8_t
   -8, 6, -4, 8, 0, -6, 5, -7, 3, 7, -2, -2
 };
 
+
+static PillPhysicsBody
+    s_pill_physics_bodies[PILL_PHYSICS_MAX_BODIES];
+static uint8_t s_pill_physics_body_count;
+static AppTimer *s_pill_physics_timer;
+static bool s_pill_physics_accel_subscribed;
+static bool s_pill_physics_window_visible;
+static int16_t s_pill_physics_gravity_x;
+static int16_t s_pill_physics_gravity_y;
+static int16_t s_pill_physics_last_target_x;
+static int16_t s_pill_physics_last_target_y;
+static uint8_t s_pill_physics_quiet_frames;
+static uint8_t s_pill_physics_sensor_quiet_samples;
+
 static bool pill_physics_medication_is_visible(
     const MedicationSettings *medication
 );
@@ -210,11 +224,12 @@ static bool pill_physics_medication_is_visible(
 ) {
   return
       medication &&
-      medication->enabled &&
       medication->icon_set &&
       medication->symbol == MEDICATION_SYMBOL_PILL &&
-      medication->time ==
-          (uint8_t)current_medication_time() &&
+      medication_is_due_at(
+        medication,
+        time(NULL)
+      ) &&
       !s_pills_confirmed;
 }
 
@@ -266,22 +281,18 @@ static uint64_t pill_rb_integer_sqrt64(uint64_t value) {
 static uint8_t pill_rb_medication_size(
     uint8_t medication_index
 ) {
-  uint8_t size = 100;
+  MedicationRuntimeView view;
 
   if (
-    medication_index < s_medication_appearance_count &&
-    s_medication_appearances[medication_index].valid
+    !medication_runtime_view(
+      medication_index,
+      &view
+    )
   ) {
-    size = s_medication_appearances[medication_index].size;
+    return 100;
   }
 
-  if (size < 60) {
-    return 60;
-  }
-  if (size > 140) {
-    return 140;
-  }
-  return size;
+  return view.appearance.size;
 }
 
 static uint16_t pill_rb_mass_from_size_q8(uint8_t size) {
@@ -340,21 +351,18 @@ static void pill_rb_collision_geometry(
     uint8_t *half_length,
     uint8_t *radius
 ) {
+  MedicationRuntimeView view;
   uint8_t shape = 0;
   uint8_t size = 100;
 
-  if (medication_index < s_medication_count) {
-    shape = s_medications[medication_index].shape;
-  }
-
   if (
-    medication_index < s_medication_appearance_count &&
-    s_medication_appearances[medication_index].valid
+    medication_runtime_view(
+      medication_index,
+      &view
+    )
   ) {
-    const MedicationAppearance *appearance =
-        &s_medication_appearances[medication_index];
-    shape = appearance->shape;
-    size = appearance->size;
+    shape = view.appearance.shape;
+    size = view.appearance.size;
   }
 
   int16_t local_half_length;
@@ -2087,6 +2095,26 @@ static void pill_physics_accel_handler(
   if (!s_pill_physics_timer) {
     pill_physics_update_activity();
   }
+}
+
+void pill_physics_set_window_visible(
+    bool visible
+) {
+  s_pill_physics_window_visible = visible;
+}
+
+uint8_t pill_physics_body_count(void) {
+  return s_pill_physics_body_count;
+}
+
+const PillPhysicsBody *pill_physics_body_at(
+    uint8_t index
+) {
+  if (index >= s_pill_physics_body_count) {
+    return NULL;
+  }
+
+  return &s_pill_physics_bodies[index];
 }
 
 void pill_physics_stop(void) {

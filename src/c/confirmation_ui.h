@@ -3,6 +3,8 @@
 #include "app_types.h"
 
 /* Medication confirmation and settings-transfer animation. */
+void confirmation_cancel_animation(void);
+void confirmation_cancel_transfer_timers(void);
 void back_button_handler(
     ClickRecognizerRef recognizer,
     void *context

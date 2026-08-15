@@ -14,6 +14,8 @@
 #include "confirmation_ui.h"
 #include "medication_ui.h"
 
+static AppTimer *s_scroll_physics_timer;
+
 static int16_t scroll_canvas_height(void);
 static int scroll_min_snap_index(void);
 static int scroll_max_snap_index(void);

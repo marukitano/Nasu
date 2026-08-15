@@ -3,6 +3,18 @@
 #include "app_types.h"
 
 /* Medication grouping, dayparts and visible rows. */
+bool medication_is_scheduled_on_date(
+    const MedicationSettings *medication,
+    const struct tm *local_date
+);
+bool medication_is_due_at(
+    const MedicationSettings *medication,
+    time_t timestamp
+);
+bool medication_runtime_view(
+    uint8_t medication_index,
+    MedicationRuntimeView *view
+);
 MedicationTime current_medication_time(void);
 void mark_medication_group_confirmed(
     MedicationSymbol symbol

@@ -26,10 +26,21 @@ The watch application is split into ordinary, separately compiled C modules.
 ## Shared types and compatibility state
 
 `app_types.h` contains constants and data structures used by more than one
-module. `app_state.c/.h` holds shared mutable runtime state.
+module. `app_state.c/.h` contains only runtime state that is genuinely shared
+across module boundaries. Timers, audio-stream buffers, physics internals and
+settings-transfer staging data are owned privately by their respective modules.
 
 `app_state.h` is an internal header; module consumers should prefer the
-focused module headers where an API is available.
+focused module headers where an API is available. Medication rendering and
+physics consume a normalized `MedicationRuntimeView`, while the persisted
+legacy-compatible `MedicationSettings` and `MedicationAppearance` formats stay
+unchanged at the storage and AppMessage boundary.
+
+The renderer keeps reusable `GPath` geometry for oval and diamond tablets, so
+animated physics frames only move/rotate existing paths instead of allocating
+and destroying them repeatedly. The general UI animation timer is demand-driven
+and runs only while the pen animation or a real medication-name marquee needs
+it.
 
 ## Lifecycle
 

@@ -3,6 +3,7 @@
 #include "app_types.h"
 
 /* Watch window and screen orchestration. */
+void medication_ui_pause_animation_timer(void);
 void medication_ui_init(void);
 void medication_ui_deinit(void);
 void apply_theme_mode(

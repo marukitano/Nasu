@@ -3,6 +3,10 @@
 #include "app_types.h"
 
 /* Medication and pill rendering. */
+void pill_renderer_deinit(void);
+bool medication_name_needs_marquee(
+    int row_index
+);
 void draw_intake_medications(
     GContext *ctx,
     GRect bounds,

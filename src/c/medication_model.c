@@ -24,7 +24,7 @@ static bool medication_name_is_listed(
 );
 static bool medication_matches_group(
     const MedicationSettings *medication,
-    MedicationTime visible_time,
+    time_t timestamp,
     MedicationSymbol symbol
 );
 void daypart_tick_handler(
@@ -57,6 +57,159 @@ static MedicationTime medication_time_for_minute(
   }
 
   return MEDICATION_TIME_NIGHT;
+}
+
+bool medication_is_scheduled_on_date(
+    const MedicationSettings *medication,
+    const struct tm *local_date
+) {
+  if (
+    !medication ||
+    !local_date ||
+    !medication->enabled
+  ) {
+    return false;
+  }
+
+  if (
+    medication->schedule ==
+        MEDICATION_SCHEDULE_DAILY
+  ) {
+    return true;
+  }
+
+  if (
+    medication->schedule ==
+        MEDICATION_SCHEDULE_WEEKLY
+  ) {
+    const uint8_t monday_based_weekday =
+        (uint8_t)((local_date->tm_wday + 6) % 7);
+
+    return medication->day ==
+        monday_based_weekday;
+  }
+
+  if (
+    medication->schedule ==
+        MEDICATION_SCHEDULE_MONTHLY
+  ) {
+    return medication->day ==
+        local_date->tm_mday;
+  }
+
+  return false;
+}
+
+bool medication_is_due_at(
+    const MedicationSettings *medication,
+    time_t timestamp
+) {
+  if (!medication || !medication->enabled) {
+    return false;
+  }
+
+  struct tm *local_ptr = localtime(&timestamp);
+
+  if (!local_ptr) {
+    return false;
+  }
+
+  struct tm schedule_date = *local_ptr;
+  const int minute =
+      schedule_date.tm_hour * 60 +
+      schedule_date.tm_min;
+  const MedicationTime slot =
+      medication_time_for_minute(minute);
+
+  /*
+   * Das Nachtfenster läuft über Mitternacht:
+   *
+   *   Dienstag 22:00 -> Mittwoch 06:00
+   *
+   * Ein für "Dienstag Nacht" geplantes Medikament bleibt deshalb auch
+   * Mittwoch um 01:00 Teil des Dienstag-Fensters. Der Alarm-Scheduler
+   * verwendet dafür ebenfalls das Datum des Fensterstarts.
+   */
+  if (
+    slot == MEDICATION_TIME_NIGHT &&
+    minute < s_dayparts.morning
+  ) {
+    schedule_date.tm_mday -= 1;
+    schedule_date.tm_isdst = -1;
+
+    const time_t normalized =
+        mktime(&schedule_date);
+
+    if (normalized <= 0) {
+      return false;
+    }
+
+    local_ptr = localtime(&normalized);
+
+    if (!local_ptr) {
+      return false;
+    }
+
+    schedule_date = *local_ptr;
+  }
+
+  return
+      medication->time == (uint8_t)slot &&
+      medication_is_scheduled_on_date(
+        medication,
+        &schedule_date
+      );
+}
+
+bool medication_runtime_view(
+    uint8_t medication_index,
+    MedicationRuntimeView *view
+) {
+  if (
+    !view ||
+    medication_index >= s_medication_count
+  ) {
+    return false;
+  }
+
+  const MedicationSettings *settings =
+      &s_medications[medication_index];
+
+  *view = (MedicationRuntimeView) {
+    .settings = settings,
+    .appearance = {
+      .valid = true,
+      .shape =
+          settings->shape <= 3
+              ? settings->shape
+              : 0,
+      .primary_color = settings->color,
+      .secondary_color = settings->color,
+      .size = 100,
+      .imprint = { 0 }
+    }
+  };
+
+  if (
+    medication_index <
+        s_medication_appearance_count &&
+    s_medication_appearances[
+      medication_index
+    ].valid
+  ) {
+    view->appearance =
+        s_medication_appearances[
+          medication_index
+        ];
+  }
+
+  if (view->appearance.size < 60) {
+    view->appearance.size = 60;
+  } else if (view->appearance.size > 140) {
+    view->appearance.size = 140;
+  }
+
+  return true;
 }
 
 MedicationTime current_medication_time(void) {
@@ -135,16 +288,17 @@ void mark_medication_group_confirmed(
 
 static bool medication_matches_group(
     const MedicationSettings *medication,
-    MedicationTime visible_time,
+    time_t timestamp,
     MedicationSymbol symbol
 ) {
   return
       medication &&
-      medication->enabled &&
-      medication->time ==
-          (uint8_t)visible_time &&
       medication->symbol ==
-          (uint8_t)symbol;
+          (uint8_t)symbol &&
+      medication_is_due_at(
+        medication,
+        timestamp
+      );
 }
 
 bool medication_group_is_due(
@@ -154,8 +308,7 @@ bool medication_group_is_due(
     return false;
   }
 
-  const MedicationTime visible_time =
-      current_medication_time();
+  const time_t now = time(NULL);
 
   for (
     uint8_t index = 0;
@@ -165,7 +318,7 @@ bool medication_group_is_due(
     if (
       medication_matches_group(
         &s_medications[index],
-        visible_time,
+        now,
         symbol
       )
     ) {
@@ -209,6 +362,7 @@ bool unconfirmed_medication_group_is_due(void) {
 }
 
 void rebuild_medication_rows(void) {
+  const time_t now = time(NULL);
   const MedicationTime visible_time =
       current_medication_time();
 
@@ -241,7 +395,7 @@ void rebuild_medication_rows(void) {
     if (
       !medication_matches_group(
         &s_medications[index],
-        visible_time,
+        now,
         symbol
       )
     ) {

@@ -366,3 +366,7 @@ typedef struct {
   uint8_t size;
   char imprint[MEDICATION_APPEARANCE_IMPRINT_LENGTH];
 } MedicationAppearance;
+typedef struct {
+  const MedicationSettings *settings;
+  MedicationAppearance appearance;
+} MedicationRuntimeView;

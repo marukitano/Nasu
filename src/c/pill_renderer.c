@@ -100,6 +100,42 @@ static const uint8_t s_pill_imprint_space[7] = {
 #define PHYSICS_ROUNDED_OVAL_TOP_CONTROL_NUM 57
 #define PHYSICS_ROUNDED_OVAL_CONTROL_DEN 100
 
+
+typedef struct {
+  bool valid;
+  uint8_t shape;
+  int16_t line_half;
+  int16_t radius;
+  int16_t diamond_half;
+  GPoint outer_points[PHYSICS_ROUNDED_OVAL_PATH_POINTS];
+  GPoint inner_points[PHYSICS_ROUNDED_OVAL_PATH_POINTS];
+  GPathInfo outer_info;
+  GPathInfo inner_info;
+  GPath *outer_path;
+  GPath *inner_path;
+} PillRenderPathCache;
+
+static PillRenderPathCache
+    s_pill_render_path_cache[MAX_MEDICATIONS];
+
+static PillRenderPathCache s_pill_icon_oval_cache;
+static PillRenderPathCache s_pill_icon_diamond_cache;
+
+static PillRenderPathCache *pill_render_icon_path_cache(
+    uint8_t shape
+);
+
+static void pill_render_path_cache_clear(
+    PillRenderPathCache *cache
+);
+static PillRenderPathCache *pill_render_path_cache_prepare(
+    uint8_t medication_index,
+    const MedicationAppearance *appearance,
+    int16_t line_half,
+    int16_t radius,
+    int16_t diamond_half
+);
+
 static const int8_t s_pen_alert_y_offsets[8] = {
   2, 0, -3, -5, -3, 0, 2, 3
 };
@@ -108,13 +144,6 @@ static const int8_t s_pen_alert_angle_degrees[8] = {
 };
 
 
-static void draw_icon_rounded_rect(
-    GContext *ctx,
-    GRect rect,
-    uint16_t radius,
-    GColor fill_color,
-    GColor outline_color
-);
 static void draw_tablet_icon(
     GContext *ctx,
     GRect frame,
@@ -204,7 +233,7 @@ static void draw_physics_appearance_diamond(
     GContext *ctx,
     GPoint center,
     int32_t angle,
-    int16_t half_size,
+    PillRenderPathCache *cache,
     GColor fill_color,
     GColor outline_color
 );
@@ -247,20 +276,11 @@ static void pill_physics_rounded_oval_quadrant(
     int16_t p3_x,
     int16_t p3_y
 );
-static void draw_physics_rounded_oval_fill(
-    GContext *ctx,
-    GPoint center,
-    int32_t angle,
-    int16_t half_width,
-    int16_t half_height,
-    GColor color
-);
 static void draw_physics_true_ellipse(
     GContext *ctx,
     GPoint center,
     int32_t angle,
-    int16_t line_half,
-    int16_t radius,
+    PillRenderPathCache *cache,
     GColor fill_color,
     GColor outline_color
 );
@@ -269,50 +289,6 @@ static void draw_physics_pill_body(
     const PillPhysicsBody *body,
     int32_t arena_y
 );
-
-static void draw_icon_rounded_rect(
-    GContext *ctx,
-    GRect rect,
-    uint16_t radius,
-    GColor fill_color,
-    GColor outline_color
-) {
-  graphics_context_set_fill_color(
-    ctx,
-    outline_color
-  );
-  graphics_fill_rect(
-    ctx,
-    rect,
-    radius,
-    GCornersAll
-  );
-
-  if (
-    rect.size.w <= 4 ||
-    rect.size.h <= 4
-  ) {
-    return;
-  }
-
-  const GRect inner = GRect(
-    rect.origin.x + 2,
-    rect.origin.y + 2,
-    rect.size.w - 4,
-    rect.size.h - 4
-  );
-
-  graphics_context_set_fill_color(
-    ctx,
-    fill_color
-  );
-  graphics_fill_rect(
-    ctx,
-    inner,
-    radius > 2 ? radius - 2 : 0,
-    GCornersAll
-  );
-}
 
 static void draw_tablet_icon(
     GContext *ctx,
@@ -380,17 +356,20 @@ static void draw_tablet_icon(
       );
       break;
 
-    case 1:
+    case 1: {
+      PillRenderPathCache *icon_cache =
+          pill_render_icon_path_cache(1);
+
       draw_physics_true_ellipse(
         ctx,
         center,
         0,
-        4,
-        6,
+        icon_cache,
         fill_color,
         primary_outline_color
       );
       break;
+    }
 
     case 2:
       draw_physics_capsule(
@@ -419,16 +398,20 @@ static void draw_tablet_icon(
       );
       break;
 
-    case 3:
+    case 3: {
+      PillRenderPathCache *icon_cache =
+          pill_render_icon_path_cache(3);
+
       draw_physics_appearance_diamond(
         ctx,
         center,
         0,
-        11,
+        icon_cache,
         fill_color,
         primary_outline_color
       );
       break;
+    }
   }
 
   graphics_context_set_stroke_width(ctx, 1);
@@ -1312,69 +1295,27 @@ static void draw_physics_appearance_diamond(
     GContext *ctx,
     GPoint center,
     int32_t angle,
-    int16_t half_size,
+    PillRenderPathCache *cache,
     GColor fill_color,
     GColor outline_color
 ) {
-  GPoint outer_points[4];
-  GPoint inner_points[4];
-  const int16_t inner_half =
-      half_size > PILL_RENDER_DIAMOND_OUTLINE_PX
-          ? half_size - PILL_RENDER_DIAMOND_OUTLINE_PX
-          : 1;
-
-  for (uint8_t index = 0; index < 4; index++) {
-    const int32_t point_angle =
-        angle + ((int32_t)index * TRIG_MAX_ANGLE) / 4;
-    outer_points[index] = GPoint(
-      center.x + (int16_t)(
-        ((int32_t)cos_lookup(point_angle) * half_size) /
-        TRIG_MAX_RATIO
-      ),
-      center.y + (int16_t)(
-        ((int32_t)sin_lookup(point_angle) * half_size) /
-        TRIG_MAX_RATIO
-      )
-    );
-    inner_points[index] = GPoint(
-      center.x + (int16_t)(
-        ((int32_t)cos_lookup(point_angle) * inner_half) /
-        TRIG_MAX_RATIO
-      ),
-      center.y + (int16_t)(
-        ((int32_t)sin_lookup(point_angle) * inner_half) /
-        TRIG_MAX_RATIO
-      )
-    );
-  }
-
-  const GPathInfo outer_info = {
-    .num_points = ARRAY_LENGTH(outer_points),
-    .points = outer_points
-  };
-  const GPathInfo inner_info = {
-    .num_points = ARRAY_LENGTH(inner_points),
-    .points = inner_points
-  };
-  GPath *outer = gpath_create(&outer_info);
-  GPath *inner = gpath_create(&inner_info);
-
-  if (!outer || !inner) {
-    if (outer) {
-      gpath_destroy(outer);
-    }
-    if (inner) {
-      gpath_destroy(inner);
-    }
+  if (
+    !cache ||
+    !cache->outer_path ||
+    !cache->inner_path
+  ) {
     return;
   }
 
+  gpath_move_to(cache->outer_path, center);
+  gpath_rotate_to(cache->outer_path, angle);
   graphics_context_set_fill_color(ctx, outline_color);
-  gpath_draw_filled(ctx, outer);
+  gpath_draw_filled(ctx, cache->outer_path);
+
+  gpath_move_to(cache->inner_path, center);
+  gpath_rotate_to(cache->inner_path, angle);
   graphics_context_set_fill_color(ctx, fill_color);
-  gpath_draw_filled(ctx, inner);
-  gpath_destroy(outer);
-  gpath_destroy(inner);
+  gpath_draw_filled(ctx, cache->inner_path);
 }
 
 static GColor medication_appearance_darker_color(
@@ -1718,139 +1659,330 @@ static void pill_physics_rounded_oval_quadrant(
   }
 }
 
-static void draw_physics_rounded_oval_fill(
-    GContext *ctx,
-    GPoint center,
-    int32_t angle,
-    int16_t half_width,
-    int16_t half_height,
-    GColor color
+static void pill_render_path_cache_clear(
+    PillRenderPathCache *cache
 ) {
-  if (half_width < 2 || half_height < 2) {
+  if (!cache) {
     return;
   }
 
-  const int16_t end_control = (int16_t)(
+  if (cache->outer_path) {
+    gpath_destroy(cache->outer_path);
+  }
+  if (cache->inner_path) {
+    gpath_destroy(cache->inner_path);
+  }
+
+  *cache = (PillRenderPathCache) { 0 };
+}
+
+static bool pill_render_cache_build_oval(
+    PillRenderPathCache *cache,
+    int16_t half_width,
+    int16_t half_height
+) {
+  const int16_t outer_half_width =
+      half_width + PILL_RENDER_OUTLINE_PX;
+  const int16_t outer_half_height =
+      half_height + PILL_RENDER_OUTLINE_PX;
+
+  const int16_t outer_end_control = (int16_t)(
+    ((int32_t)outer_half_height *
+     PHYSICS_ROUNDED_OVAL_END_CONTROL_NUM +
+     PHYSICS_ROUNDED_OVAL_CONTROL_DEN / 2) /
+    PHYSICS_ROUNDED_OVAL_CONTROL_DEN
+  );
+  const int16_t outer_top_control = (int16_t)(
+    ((int32_t)outer_half_width *
+     PHYSICS_ROUNDED_OVAL_TOP_CONTROL_NUM +
+     PHYSICS_ROUNDED_OVAL_CONTROL_DEN / 2) /
+    PHYSICS_ROUNDED_OVAL_CONTROL_DEN
+  );
+  const int16_t inner_end_control = (int16_t)(
     ((int32_t)half_height *
      PHYSICS_ROUNDED_OVAL_END_CONTROL_NUM +
      PHYSICS_ROUNDED_OVAL_CONTROL_DEN / 2) /
     PHYSICS_ROUNDED_OVAL_CONTROL_DEN
   );
-  const int16_t top_control = (int16_t)(
+  const int16_t inner_top_control = (int16_t)(
     ((int32_t)half_width *
      PHYSICS_ROUNDED_OVAL_TOP_CONTROL_NUM +
      PHYSICS_ROUNDED_OVAL_CONTROL_DEN / 2) /
     PHYSICS_ROUNDED_OVAL_CONTROL_DEN
   );
 
-  GPoint points[PHYSICS_ROUNDED_OVAL_PATH_POINTS];
-
-  /* Right end -> top. */
   pill_physics_rounded_oval_quadrant(
-    points,
+    cache->outer_points,
     0,
-    half_width,
-    0,
-    half_width,
-    (int16_t)-end_control,
-    top_control,
-    (int16_t)-half_height,
-    0,
-    (int16_t)-half_height
+    outer_half_width, 0,
+    outer_half_width, (int16_t)-outer_end_control,
+    outer_top_control, (int16_t)-outer_half_height,
+    0, (int16_t)-outer_half_height
   );
-
-  /* Top -> left end. */
   pill_physics_rounded_oval_quadrant(
-    points,
+    cache->outer_points,
     PHYSICS_ROUNDED_OVAL_QUADRANT_STEPS,
-    0,
-    (int16_t)-half_height,
-    (int16_t)-top_control,
-    (int16_t)-half_height,
-    (int16_t)-half_width,
-    (int16_t)-end_control,
-    (int16_t)-half_width,
-    0
+    0, (int16_t)-outer_half_height,
+    (int16_t)-outer_top_control, (int16_t)-outer_half_height,
+    (int16_t)-outer_half_width, (int16_t)-outer_end_control,
+    (int16_t)-outer_half_width, 0
   );
-
-  /* Left end -> bottom. */
   pill_physics_rounded_oval_quadrant(
-    points,
+    cache->outer_points,
     PHYSICS_ROUNDED_OVAL_QUADRANT_STEPS * 2,
-    (int16_t)-half_width,
-    0,
-    (int16_t)-half_width,
-    end_control,
-    (int16_t)-top_control,
-    half_height,
-    0,
-    half_height
+    (int16_t)-outer_half_width, 0,
+    (int16_t)-outer_half_width, outer_end_control,
+    (int16_t)-outer_top_control, outer_half_height,
+    0, outer_half_height
   );
-
-  /* Bottom -> right end. */
   pill_physics_rounded_oval_quadrant(
-    points,
+    cache->outer_points,
     PHYSICS_ROUNDED_OVAL_QUADRANT_STEPS * 3,
-    0,
-    half_height,
-    top_control,
-    half_height,
-    half_width,
-    end_control,
-    half_width,
-    0
+    0, outer_half_height,
+    outer_top_control, outer_half_height,
+    outer_half_width, outer_end_control,
+    outer_half_width, 0
   );
 
-  const GPathInfo path_info = {
-    .num_points = PHYSICS_ROUNDED_OVAL_PATH_POINTS,
-    .points = points
-  };
-  GPath *path = gpath_create(&path_info);
+  pill_physics_rounded_oval_quadrant(
+    cache->inner_points,
+    0,
+    half_width, 0,
+    half_width, (int16_t)-inner_end_control,
+    inner_top_control, (int16_t)-half_height,
+    0, (int16_t)-half_height
+  );
+  pill_physics_rounded_oval_quadrant(
+    cache->inner_points,
+    PHYSICS_ROUNDED_OVAL_QUADRANT_STEPS,
+    0, (int16_t)-half_height,
+    (int16_t)-inner_top_control, (int16_t)-half_height,
+    (int16_t)-half_width, (int16_t)-inner_end_control,
+    (int16_t)-half_width, 0
+  );
+  pill_physics_rounded_oval_quadrant(
+    cache->inner_points,
+    PHYSICS_ROUNDED_OVAL_QUADRANT_STEPS * 2,
+    (int16_t)-half_width, 0,
+    (int16_t)-half_width, inner_end_control,
+    (int16_t)-inner_top_control, half_height,
+    0, half_height
+  );
+  pill_physics_rounded_oval_quadrant(
+    cache->inner_points,
+    PHYSICS_ROUNDED_OVAL_QUADRANT_STEPS * 3,
+    0, half_height,
+    inner_top_control, half_height,
+    half_width, inner_end_control,
+    half_width, 0
+  );
 
-  if (!path) {
-    return;
+  cache->outer_info = (GPathInfo) {
+    .num_points = PHYSICS_ROUNDED_OVAL_PATH_POINTS,
+    .points = cache->outer_points
+  };
+  cache->inner_info = (GPathInfo) {
+    .num_points = PHYSICS_ROUNDED_OVAL_PATH_POINTS,
+    .points = cache->inner_points
+  };
+
+  cache->outer_path =
+      gpath_create(&cache->outer_info);
+  cache->inner_path =
+      gpath_create(&cache->inner_info);
+
+  return
+      cache->outer_path != NULL &&
+      cache->inner_path != NULL;
+}
+
+static bool pill_render_cache_build_diamond(
+    PillRenderPathCache *cache,
+    int16_t outer_half
+) {
+  const int16_t inner_half =
+      outer_half > PILL_RENDER_DIAMOND_OUTLINE_PX
+          ? outer_half - PILL_RENDER_DIAMOND_OUTLINE_PX
+          : 1;
+
+  cache->outer_points[0] = GPoint(outer_half, 0);
+  cache->outer_points[1] = GPoint(0, outer_half);
+  cache->outer_points[2] = GPoint((int16_t)-outer_half, 0);
+  cache->outer_points[3] = GPoint(0, (int16_t)-outer_half);
+
+  cache->inner_points[0] = GPoint(inner_half, 0);
+  cache->inner_points[1] = GPoint(0, inner_half);
+  cache->inner_points[2] = GPoint((int16_t)-inner_half, 0);
+  cache->inner_points[3] = GPoint(0, (int16_t)-inner_half);
+
+  cache->outer_info = (GPathInfo) {
+    .num_points = 4,
+    .points = cache->outer_points
+  };
+  cache->inner_info = (GPathInfo) {
+    .num_points = 4,
+    .points = cache->inner_points
+  };
+
+  cache->outer_path =
+      gpath_create(&cache->outer_info);
+  cache->inner_path =
+      gpath_create(&cache->inner_info);
+
+  return
+      cache->outer_path != NULL &&
+      cache->inner_path != NULL;
+}
+
+static PillRenderPathCache *pill_render_icon_path_cache(
+    uint8_t shape
+) {
+  PillRenderPathCache *cache = NULL;
+  bool built = false;
+
+  if (shape == 1) {
+    cache = &s_pill_icon_oval_cache;
+
+    if (cache->valid) {
+      return cache;
+    }
+
+    pill_render_path_cache_clear(cache);
+    built = pill_render_cache_build_oval(
+      cache,
+      10,
+      6
+    );
+  } else if (shape == 3) {
+    cache = &s_pill_icon_diamond_cache;
+
+    if (cache->valid) {
+      return cache;
+    }
+
+    pill_render_path_cache_clear(cache);
+    built = pill_render_cache_build_diamond(
+      cache,
+      11
+    );
   }
 
-  gpath_move_to(path, center);
-  gpath_rotate_to(path, angle);
-  graphics_context_set_fill_color(ctx, color);
-  gpath_draw_filled(ctx, path);
-  gpath_destroy(path);
+  if (!cache || !built) {
+    if (cache) {
+      pill_render_path_cache_clear(cache);
+    }
+    return NULL;
+  }
+
+  cache->valid = true;
+  cache->shape = shape;
+  return cache;
+}
+
+static PillRenderPathCache *pill_render_path_cache_prepare(
+    uint8_t medication_index,
+    const MedicationAppearance *appearance,
+    int16_t line_half,
+    int16_t radius,
+    int16_t diamond_half
+) {
+  if (
+    medication_index >= MAX_MEDICATIONS ||
+    !appearance ||
+    (appearance->shape != 1 &&
+     appearance->shape != 3)
+  ) {
+    return NULL;
+  }
+
+  PillRenderPathCache *cache =
+      &s_pill_render_path_cache[medication_index];
+
+  if (
+    cache->valid &&
+    cache->shape == appearance->shape &&
+    cache->line_half == line_half &&
+    cache->radius == radius &&
+    cache->diamond_half == diamond_half
+  ) {
+    return cache;
+  }
+
+  pill_render_path_cache_clear(cache);
+
+  cache->shape = appearance->shape;
+  cache->line_half = line_half;
+  cache->radius = radius;
+  cache->diamond_half = diamond_half;
+
+  bool built = false;
+
+  if (appearance->shape == 1) {
+    built = pill_render_cache_build_oval(
+      cache,
+      line_half + radius,
+      radius
+    );
+  } else {
+    built = pill_render_cache_build_diamond(
+      cache,
+      diamond_half
+    );
+  }
+
+  if (!built) {
+    pill_render_path_cache_clear(cache);
+    return NULL;
+  }
+
+  cache->valid = true;
+  return cache;
+}
+
+void pill_renderer_deinit(void) {
+  for (
+    uint8_t index = 0;
+    index < MAX_MEDICATIONS;
+    index++
+  ) {
+    pill_render_path_cache_clear(
+      &s_pill_render_path_cache[index]
+    );
+  }
+
+  pill_render_path_cache_clear(
+    &s_pill_icon_oval_cache
+  );
+  pill_render_path_cache_clear(
+    &s_pill_icon_diamond_cache
+  );
 }
 
 static void draw_physics_true_ellipse(
     GContext *ctx,
     GPoint center,
     int32_t angle,
-    int16_t line_half,
-    int16_t radius,
+    PillRenderPathCache *cache,
     GColor fill_color,
     GColor outline_color
 ) {
-  const int16_t inner_half_width =
-      line_half + radius;
-  const int16_t inner_half_height = radius;
+  if (
+    !cache ||
+    !cache->outer_path ||
+    !cache->inner_path
+  ) {
+    return;
+  }
 
-  /*
-   * The same flatter, strongly rounded outline is drawn twice. The larger
-   * outer shape leaves the shared border thickness around the tablet.
-   */
-  draw_physics_rounded_oval_fill(
-    ctx,
-    center,
-    angle,
-    inner_half_width + PILL_RENDER_OUTLINE_PX,
-    inner_half_height + PILL_RENDER_OUTLINE_PX,
-    outline_color
-  );
-  draw_physics_rounded_oval_fill(
-    ctx,
-    center,
-    angle,
-    inner_half_width,
-    inner_half_height,
-    fill_color
-  );
+  gpath_move_to(cache->outer_path, center);
+  gpath_rotate_to(cache->outer_path, angle);
+  graphics_context_set_fill_color(ctx, outline_color);
+  gpath_draw_filled(ctx, cache->outer_path);
+
+  gpath_move_to(cache->inner_path, center);
+  gpath_rotate_to(cache->inner_path, angle);
+  graphics_context_set_fill_color(ctx, fill_color);
+  gpath_draw_filled(ctx, cache->inner_path);
 }
 
 static void draw_physics_pill_body(
@@ -1858,29 +1990,23 @@ static void draw_physics_pill_body(
     const PillPhysicsBody *body,
     int32_t arena_y
 ) {
+  if (!body) {
+    return;
+  }
+
+  MedicationRuntimeView view;
+
   if (
-    !body ||
-    body->medication_index >= s_medication_count
+    !medication_runtime_view(
+      body->medication_index,
+      &view
+    )
   ) {
     return;
   }
 
-  const MedicationSettings *medication =
-      &s_medications[body->medication_index];
-  const MedicationAppearance *stored =
-      body->medication_index < s_medication_appearance_count
-          ? &s_medication_appearances[body->medication_index]
-          : NULL;
-  MedicationAppearance fallback = {
-    .valid = true,
-    .shape = medication->shape <= 3 ? medication->shape : 0,
-    .primary_color = medication->color,
-    .secondary_color = medication->color,
-    .size = 100,
-    .imprint = { 0 }
-  };
   const MedicationAppearance *appearance =
-      stored && stored->valid ? stored : &fallback;
+      &view.appearance;
   const GColor fill_color = {
     .argb = appearance->primary_color
   };
@@ -1912,14 +2038,22 @@ static void draw_physics_pill_body(
     &diamond_half
   );
 
+  PillRenderPathCache *path_cache =
+      pill_render_path_cache_prepare(
+        body->medication_index,
+        appearance,
+        line_half,
+        radius,
+        diamond_half
+      );
+
   switch (appearance->shape) {
     case 1:
       draw_physics_true_ellipse(
         ctx,
         center,
         body->angle,
-        line_half,
-        radius,
+        path_cache,
         fill_color,
         primary_outline_color
       );
@@ -1943,7 +2077,7 @@ static void draw_physics_pill_body(
         ctx,
         center,
         body->angle,
-        diamond_half,
+        path_cache,
         fill_color,
         primary_outline_color
       );
@@ -2021,14 +2155,24 @@ void draw_physics_pills(
     return;
   }
 
+  const uint8_t body_count =
+      pill_physics_body_count();
+
   for (
     uint8_t index = 0;
-    index < s_pill_physics_body_count;
+    index < body_count;
     index++
   ) {
+    const PillPhysicsBody *body =
+        pill_physics_body_at(index);
+
+    if (!body) {
+      continue;
+    }
+
     draw_physics_pill_body(
       ctx,
-      &s_pill_physics_bodies[index],
+      body,
       arena_y
     );
   }
@@ -2052,6 +2196,40 @@ static int16_t medication_name_width(
       );
 
   return size.w;
+}
+
+bool medication_name_needs_marquee(
+    int row_index
+) {
+  if (
+    row_index < 0 ||
+    row_index >= LIST_ROW_COUNT ||
+    !s_canvas_layer
+  ) {
+    return false;
+  }
+
+  const int8_t medication_index =
+      s_row_medication_indices[row_index];
+
+  if (
+    medication_index < 0 ||
+    medication_index >= (int8_t)s_medication_count
+  ) {
+    return false;
+  }
+
+  const GRect bounds =
+      layer_get_bounds(s_canvas_layer);
+  const int16_t available_width =
+      bounds.size.w -
+      MEDICATION_ICON_TEXT_X -
+      MEDICATION_ICON_TEXT_RIGHT;
+
+  return
+      medication_name_width(
+        s_medications[medication_index].name
+      ) > available_width;
 }
 
 static int16_t medication_marquee_offset(
@@ -2256,11 +2434,17 @@ void draw_intake_medications(
       GTextOverflowModeTrailingEllipsis, GTextAlignmentLeft, NULL
     );
 
-    const MedicationAppearance *appearance =
-        medication_index < (int8_t)s_medication_appearance_count &&
-        s_medication_appearances[medication_index].valid
-            ? &s_medication_appearances[medication_index]
-            : NULL;
+    MedicationRuntimeView runtime_view;
+    const MedicationAppearance *appearance = NULL;
+
+    if (
+      medication_runtime_view(
+        (uint8_t)medication_index,
+        &runtime_view
+      )
+    ) {
+      appearance = &runtime_view.appearance;
+    }
 
     draw_medication_icon(
       ctx,
@@ -2420,12 +2604,17 @@ void draw_medications(
       );
     }
 
-    const MedicationAppearance *appearance =
-        medication_index <
-            (int8_t)s_medication_appearance_count &&
-        s_medication_appearances[medication_index].valid
-            ? &s_medication_appearances[medication_index]
-            : NULL;
+    MedicationRuntimeView runtime_view;
+    const MedicationAppearance *appearance = NULL;
+
+    if (
+      medication_runtime_view(
+        (uint8_t)medication_index,
+        &runtime_view
+      )
+    ) {
+      appearance = &runtime_view.appearance;
+    }
 
     draw_medication_icon(
       ctx,

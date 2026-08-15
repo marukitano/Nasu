@@ -19,6 +19,19 @@
 static AppTimer *s_alarm_intro_timer;
 static bool s_alarm_visuals_are_paused;
 
+static bool s_alarm_window_state_loaded;
+static time_t s_alarm_stop_time;
+static uint8_t s_alarm_due_symbol_mask;
+static AppTimer *s_alarm_pulse_timer;
+static AppTimer *s_alarm_audio_pump_timer;
+static ResHandle s_alarm_audio_resource;
+static size_t s_alarm_audio_resource_size;
+static size_t s_alarm_audio_resource_offset;
+static uint8_t s_alarm_audio_buffer[ALARM_AUDIO_BUFFER_SIZE];
+static size_t s_alarm_audio_buffer_size;
+static size_t s_alarm_audio_buffer_offset;
+static bool s_alarm_audio_active;
+
 static void alarm_release_visuals(void);
 static void alarm_intro_timer_handler(void *context);
 static void alarm_audio_finish_callback(
@@ -31,10 +44,6 @@ static bool alarm_audio_load_next_chunk(void);
 static void alarm_audio_schedule_pump(void);
 static void alarm_audio_pump(void *context);
 static bool alarm_audio_start(void);
-static bool medication_due_on_date(
-    const MedicationSettings *medication,
-    const struct tm *local_date
-);
 static bool alarm_window_bounds_at(
     time_t timestamp,
     time_t *window_start,
@@ -54,7 +63,6 @@ static void alarm_wakeup_handler(
     WakeupId wakeup_id,
     int32_t cookie
 );
-static bool minute_is_daypart_start(int minute);
 
 bool alarm_reminder_interval_valid(int value) {
   switch (value) {
@@ -394,41 +402,6 @@ static bool alarm_audio_start(void) {
   return s_alarm_audio_active;
 }
 
-static bool medication_due_on_date(
-    const MedicationSettings *medication,
-    const struct tm *local_date
-) {
-  if (!medication || !local_date || !medication->enabled) {
-    return false;
-  }
-
-  if (
-    medication->schedule ==
-        MEDICATION_SCHEDULE_DAILY
-  ) {
-    return true;
-  }
-
-  if (
-    medication->schedule ==
-        MEDICATION_SCHEDULE_WEEKLY
-  ) {
-    const uint8_t monday_based_weekday =
-        (uint8_t)((local_date->tm_wday + 6) % 7);
-
-    return medication->day == monday_based_weekday;
-  }
-
-  if (
-    medication->schedule ==
-        MEDICATION_SCHEDULE_MONTHLY
-  ) {
-    return medication->day == local_date->tm_mday;
-  }
-
-  return false;
-}
-
 static bool alarm_window_bounds_at(
     time_t timestamp,
     time_t *window_start,
@@ -598,7 +571,7 @@ static uint8_t alarm_symbol_mask_for_window(
 
     if (
       medication->time != (uint8_t)slot ||
-      !medication_due_on_date(
+      !medication_is_scheduled_on_date(
         medication,
         &schedule_date
       )
@@ -637,6 +610,43 @@ uint8_t alarm_unconfirmed_symbol_mask_at(
         slot
       ) &
       (uint8_t)~s_alarm_window_state.confirmed_mask;
+}
+
+bool alarm_intake_navigation_lock_required(void) {
+  const time_t now = time(NULL);
+  time_t window_start;
+
+  if (
+    !alarm_window_bounds_at(
+      now,
+      &window_start,
+      NULL,
+      NULL
+    )
+  ) {
+    return false;
+  }
+
+  /*
+   * last_reminder is persisted for the current intake window. A value inside
+   * this window means at least one real alarm/reminder has already fired.
+   * Merely opening Nasu before the first alarm therefore does not lock the UI.
+   */
+  alarm_refresh_window_state();
+
+  if (
+    s_alarm_window_state.last_reminder <
+        (int32_t)window_start
+  ) {
+    return false;
+  }
+
+  /*
+   * Keep the intake flow locked after vibration/audio stop and across app
+   * restarts until every due medication group in this window is confirmed.
+   */
+  return
+      alarm_unconfirmed_symbol_mask_at(now) != 0;
 }
 
 static time_t next_due_window_start_after(time_t now) {
@@ -701,14 +711,22 @@ static time_t next_alarm_timestamp_after(time_t now) {
       s_alarm_window_state.last_reminder <
           (int32_t)window_start
     ) {
-      candidate = now + 60;
+      /*
+       * Alarmzeiten sind minutengenau. Beginnt Nasu mitten in einem bereits
+       * fälligen Fenster, ist der erste Reminder deshalb die nächste volle
+       * Minute statt "jetzt + 60 s". So bleibt derselbe Zeitpunkt auch dann
+       * stabil, wenn die App im Vordergrund weiterläuft.
+       */
+      candidate =
+          ((now / 60) + 1) * 60;
     } else {
       candidate =
           (time_t)s_alarm_window_state.last_reminder +
           (time_t)s_alarm_reminder_interval_minutes * 60;
 
       if (candidate <= now) {
-        candidate = now + 60;
+        candidate =
+            ((now / 60) + 1) * 60;
       }
     }
 
@@ -868,8 +886,13 @@ void alarm_start(void) {
   }
 
   alarm_refresh_window_state();
+  /*
+   * Reminder-Intervalle sind minutengenau. Wakeups können vom System ein
+   * paar Sekunden nach der Zielminute geliefert werden; diese Verzögerung
+   * darf nicht alle folgenden Reminder dauerhaft nach hinten verschieben.
+   */
   s_alarm_window_state.last_reminder =
-      (int32_t)now;
+      (int32_t)(now - (now % 60));
   persist_alarm_window_state();
 
   s_alarm_due_symbol_mask = due_mask;
@@ -912,12 +935,58 @@ static void alarm_wakeup_handler(
   schedule_next_alarm_wakeup();
 }
 
-static bool minute_is_daypart_start(int minute) {
+static bool alarm_reminder_due_at(
+    time_t timestamp
+) {
+  if (
+    s_alarm_active ||
+    s_transfer_screen_active
+  ) {
+    return false;
+  }
+
+  time_t window_start;
+  time_t window_end;
+
+  if (
+    !alarm_window_bounds_at(
+      timestamp,
+      &window_start,
+      &window_end,
+      NULL
+    ) ||
+    timestamp >= window_end
+  ) {
+    return false;
+  }
+
+  /*
+   * Diese Funktion aktualisiert zugleich den persistierten Fensterzustand.
+   * Dadurch nutzen Foreground und Wakeup dieselbe Fälligkeitslogik.
+   */
+  if (
+    alarm_unconfirmed_symbol_mask_at(
+      timestamp
+    ) == 0
+  ) {
+    return false;
+  }
+
+  if (
+    s_alarm_window_state.last_reminder <
+        (int32_t)window_start
+  ) {
+    return true;
+  }
+
+  const time_t next_reminder =
+      (time_t)s_alarm_window_state.last_reminder +
+      (time_t)s_alarm_reminder_interval_minutes *
+          60;
+
   return
-      minute == s_dayparts.morning ||
-      minute == s_dayparts.noon ||
-      minute == s_dayparts.evening ||
-      minute == s_dayparts.night;
+      timestamp >= next_reminder &&
+      timestamp < window_end;
 }
 
 void alarm_handle_minute_tick(
@@ -927,12 +996,21 @@ void alarm_handle_minute_tick(
     return;
   }
 
-  const int minute =
-      tick_time->tm_hour * 60 +
-      tick_time->tm_min;
+  struct tm local_minute = *tick_time;
+  local_minute.tm_sec = 0;
+  local_minute.tm_isdst = -1;
 
-  if (minute_is_daypart_start(minute)) {
-    alarm_refresh_window_state();
+  time_t now = mktime(&local_minute);
+
+  if (now <= 0) {
+    now = time(NULL);
+  }
+
+  /*
+   * Ist Nasu bereits offen, ist der Minuten-Tick der Foreground-Scheduler.
+   * Er muss daher sowohl den ersten Alarm als auch spätere Reminder starten.
+   */
+  if (alarm_reminder_due_at(now)) {
     alarm_start();
   }
 

@@ -32,6 +32,7 @@ static void draw_pill_select_marker(
 );
 static GBitmap *s_alert_pattern_dark_bitmap;
 static GBitmap *s_alert_pattern_light_bitmap;
+static AppTimer *s_ui_timer;
 static AppTimer *s_alarm_screen_timer;
 static bool s_refresh_after_vespa_scroll;
 static bool s_alarm_transitioning_to_pills;
@@ -73,7 +74,7 @@ static void sync_medication_marquee(
     bool advance
 );
 static void ui_timer_callback(void *context);
-static void start_ui_timer(void);
+static void update_ui_timer_activity(void);
 static void alarm_screen_timer_handler(
     void *context
 );
@@ -118,9 +119,7 @@ bool medication_ui_alarm_transitioning_to_pills(void) {
 }
 
 bool medication_ui_alarm_navigation_locked(void) {
-  return
-      s_alarm_navigation_locked &&
-      s_alarm_active;
+  return s_alarm_navigation_locked;
 }
 
 static void invalidate_vespa_next_alarm_cache(void) {
@@ -346,6 +345,10 @@ static void draw_pill_select_marker(
   );
 }
 
+void medication_ui_pause_animation_timer(void) {
+  cancel_timer(&s_ui_timer);
+}
+
 void mark_scene_dirty(void) {
   update_band_animation_target();
   sync_medication_marquee(false);
@@ -361,6 +364,8 @@ void mark_scene_dirty(void) {
   if (s_band_arrow_layer && !layer_get_hidden(s_band_arrow_layer)) {
     layer_mark_dirty(s_band_arrow_layer);
   }
+
+  update_ui_timer_activity();
 }
 
 static void apply_effective_theme(bool light_theme) {
@@ -861,36 +866,66 @@ static void sync_medication_marquee(
   }
 }
 
-static void ui_timer_callback(void *context) {
-  s_ui_timer = NULL;
-
+static bool pen_alert_animation_needed(void) {
   if (
     !s_canvas_layer ||
+    s_confirmed_screen_active ||
     s_transfer_screen_active
   ) {
+    return false;
+  }
+
+  const GRect bounds =
+      layer_get_bounds(s_canvas_layer);
+  const int32_t page_top =
+      visual_canvas_offset_y();
+
+  if (
+    page_top >= bounds.size.h ||
+    page_top + bounds.size.h <= 0
+  ) {
+    return false;
+  }
+
+  MedicationSymbol active_symbol;
+
+  return
+      active_medication_symbol(&active_symbol) &&
+      active_symbol == MEDICATION_SYMBOL_PEN;
+}
+
+static bool medication_marquee_animation_needed(void) {
+  sync_medication_marquee(false);
+
+  return
+      s_medication_marquee_row >= 0 &&
+      medication_name_needs_marquee(
+        s_medication_marquee_row
+      );
+}
+
+static bool ui_animation_needed(void) {
+  if (
+    !s_canvas_layer ||
+    s_transfer_screen_active ||
+    alarm_visuals_paused()
+  ) {
+    return false;
+  }
+
+  return
+      pen_alert_animation_needed() ||
+      medication_marquee_animation_needed();
+}
+
+static void update_ui_timer_activity(void) {
+  if (!ui_animation_needed()) {
+    cancel_timer(&s_ui_timer);
     return;
   }
 
-  const bool visuals_paused =
-      alarm_visuals_paused();
-
-  if (!visuals_paused) {
-    if (!s_confirmed_screen_active) {
-      s_animation_tick =
-          (s_animation_tick + 1) %
-          (ALERT_ANIMATION_FRAME_COUNT *
-           ALERT_ANIMATION_TICKS_PER_FRAME);
-
-    }
-
-    sync_medication_marquee(true);
-    mark_scene_dirty();
-  } else {
-    /*
-     * During the one-shot acoustic intro the first alert frame stays
-     * completely static. This keeps redraw work away from PCM streaming.
-     */
-    sync_medication_marquee(false);
+  if (s_ui_timer) {
+    return;
   }
 
   s_ui_timer = app_timer_register(
@@ -900,18 +935,23 @@ static void ui_timer_callback(void *context) {
   );
 }
 
-static void start_ui_timer(void) {
-  cancel_timer(&s_ui_timer);
+static void ui_timer_callback(void *context) {
+  (void)context;
+  s_ui_timer = NULL;
 
-  if (s_transfer_screen_active) {
+  if (!ui_animation_needed()) {
     return;
   }
 
-  s_ui_timer = app_timer_register(
-    UI_TICK_MS,
-    ui_timer_callback,
-    NULL
-  );
+  if (pen_alert_animation_needed()) {
+    s_animation_tick =
+        (s_animation_tick + 1) %
+        (ALERT_ANIMATION_FRAME_COUNT *
+         ALERT_ANIMATION_TICKS_PER_FRAME);
+  }
+
+  sync_medication_marquee(true);
+  mark_scene_dirty();
 }
 
 static void alarm_screen_timer_handler(
@@ -1009,7 +1049,7 @@ void medication_ui_return_to_vespa_after_confirmation(void) {
    * Intake-Snapshot auf und reset_ui_state() startet wegen des Locks direkt
    * wieder auf der Pillenanimation - ohne Vespa-Zwischenstopp.
    */
-  if (s_alarm_active) {
+  if (alarm_intake_navigation_lock_required()) {
     s_alarm_navigation_locked = true;
     s_refresh_after_vespa_scroll = false;
     refresh_app_screen_state();
@@ -1032,7 +1072,8 @@ void medication_ui_scroll_settled(void) {
      * Die Vespa wird bis zum Ende des aktiven Alarms gesperrt.
      */
     s_alarm_transitioning_to_pills = false;
-    s_alarm_navigation_locked = s_alarm_active;
+    s_alarm_navigation_locked =
+        alarm_intake_navigation_lock_required();
     mark_scene_dirty();
     return;
   }
@@ -1152,6 +1193,13 @@ void refresh_app_screen_state(void) {
   cancel_timer(&s_alarm_screen_timer);
   reset_medication_confirmations();
 
+  /*
+   * The active vibration/audio event may already be over. The intake lock,
+   * however, survives until every due medication has been confirmed.
+   */
+  s_alarm_navigation_locked =
+      alarm_intake_navigation_lock_required();
+
   const bool show_confirmed_screen =
       alarm_unconfirmed_symbol_mask_at(time(NULL)) == 0;
   const bool state_changed =
@@ -1180,7 +1228,6 @@ void refresh_app_screen_state(void) {
     layer_set_hidden(s_confirmation_layer, show_confirmed_screen);
   }
 
-  start_ui_timer();
   mark_scene_dirty();
   pill_physics_update_activity();
 
@@ -1311,7 +1358,7 @@ static void window_load(Window *window) {
 
 static void window_appear(Window *window) {
   (void)window;
-  s_pill_physics_window_visible = true;
+  pill_physics_set_window_visible(true);
 
   refresh_medication_rows_for_time();
 
@@ -1339,13 +1386,13 @@ static void window_disappear(Window *window) {
   s_alarm_transitioning_to_pills = false;
   s_alarm_navigation_locked = false;
 
-  s_pill_physics_window_visible = false;
+  pill_physics_set_window_visible(false);
   pill_physics_update_activity();
 
   cancel_timer(&s_alarm_screen_timer);
   s_refresh_after_vespa_scroll = false;
   cancel_timer(&s_ui_timer);
-  cancel_timer(&s_confirmation_timer);
+  confirmation_cancel_animation();
   cancel_timer(&s_band_animation_timer);
   cancel_scroll_physics();
 
@@ -1360,12 +1407,12 @@ static void window_unload(Window *window) {
   s_alarm_navigation_locked = false;
 
   pill_physics_stop();
+  pill_renderer_deinit();
   cancel_timer(&s_alarm_screen_timer);
   s_refresh_after_vespa_scroll = false;
-  cancel_timer(&s_transfer_close_timer);
-  cancel_timer(&s_transfer_animation_timer);
+  confirmation_cancel_transfer_timers();
   cancel_timer(&s_ui_timer);
-  cancel_timer(&s_confirmation_timer);
+  confirmation_cancel_animation();
   cancel_timer(&s_band_animation_timer);
   cancel_scroll_physics();
 
@@ -1441,10 +1488,9 @@ void medication_ui_deinit(void) {
 
   cancel_timer(&s_alarm_screen_timer);
   s_refresh_after_vespa_scroll = false;
-  cancel_timer(&s_transfer_close_timer);
-  cancel_timer(&s_transfer_animation_timer);
+  confirmation_cancel_transfer_timers();
   cancel_timer(&s_ui_timer);
-  cancel_timer(&s_confirmation_timer);
+  confirmation_cancel_animation();
   cancel_timer(&s_band_animation_timer);
   tick_timer_service_unsubscribe();
 
