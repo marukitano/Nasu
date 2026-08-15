@@ -46,7 +46,6 @@ typedef enum {
   CONFIRM_OK_BOUNCING_DOWN
 } ConfirmationOkState;
 
-static ResHandle s_confirmation_nasu_resource;
 static ResHandle s_confirmation_ok_resource;
 static ResHandle s_confirmed_vespa_resource;
 static bool s_confirmation_image_active;
@@ -92,7 +91,6 @@ static uint16_t integer_sqrt_u32(uint32_t value) {
 
 static void reset_confirmation_image(void) {
   s_confirmation_image_active = false;
-  s_confirmation_nasu_resource = NULL;
   s_confirmation_ok_resource = NULL;
   s_confirmation_image_error_logged = false;
   s_confirmation_ok_state = CONFIRM_OK_HIDDEN;
@@ -135,20 +133,12 @@ static bool confirmation_resource_valid(
 }
 
 static bool prepare_confirmation_image(void) {
-  s_confirmation_nasu_resource =
-      resource_get_handle(
-        RESOURCE_ID_RAW_CONFIRM_NASU
-      );
   s_confirmation_ok_resource =
       resource_get_handle(
         RESOURCE_ID_RAW_CONFIRM_OK
       );
 
   if (
-    !confirmation_resource_valid(
-      s_confirmation_nasu_resource,
-      "RAW_CONFIRM_NASU"
-    ) ||
     !confirmation_resource_valid(
       s_confirmation_ok_resource,
       "RAW_CONFIRM_OK"
@@ -245,7 +235,7 @@ static bool draw_streamed_confirmation_image_to_framebuffer(
       continue;
     }
 
-    /* Same optimisation for the circular Nasu reveal. */
+    /* Skip chunks outside the active clipped region as well. */
     if (
       clip_to_confirm_radius &&
       (

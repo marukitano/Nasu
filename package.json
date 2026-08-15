@@ -57,11 +57,6 @@
         },
         {
           "type": "raw",
-          "name": "RAW_CONFIRM_NASU",
-          "file": "images/OK_part1.raw"
-        },
-        {
-          "type": "raw",
           "name": "RAW_CONFIRM_OK",
           "file": "images/OK_part2.raw"
         },
