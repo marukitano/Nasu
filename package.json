@@ -74,6 +74,12 @@
           "type": "raw",
           "name": "ALARM_PCM",
           "file": "sounds/alarm.pcm"
+        },
+        {
+          "characterRegex": "[ナース！]",
+          "type": "font",
+          "name": "FONT_NURSE_JP_20",
+          "file": "fonts/KosugiMaru-Regular.ttf"
         }
       ]
     },

@@ -32,6 +32,7 @@ static void draw_pill_select_marker(
 );
 static GBitmap *s_alert_pattern_dark_bitmap;
 static GBitmap *s_alert_pattern_light_bitmap;
+static GFont s_nurse_japanese_font;
 static AppTimer *s_ui_timer;
 static AppTimer *s_alarm_screen_timer;
 static bool s_refresh_after_vespa_scroll;
@@ -535,48 +536,66 @@ static void draw_vespa_next_alarm_bubble(
     GRect bounds,
     int32_t vespa_top
 ) {
-  const time_t next_alarm =
-      cached_vespa_next_alarm_timestamp();
+  const bool intake_locked =
+      alarm_intake_navigation_lock_required();
 
-  if (next_alarm <= 0) {
-    return;
+  const char *bubble_text = NULL;
+  GFont bubble_font = fonts_get_system_font(
+    FONT_KEY_GOTHIC_18_BOLD
+  );
+  char vertical_time_text[16];
+
+  if (intake_locked) {
+    if (s_nurse_japanese_font) {
+      bubble_text = "ナ\nー\nス\n！";
+      bubble_font = s_nurse_japanese_font;
+    } else {
+      /*
+       * Font loading should normally succeed. Keep a readable fallback
+       * instead of ever showing missing-glyph squares.
+       */
+      bubble_text = "N\nA\nS\nU\n!";
+    }
+  } else {
+    const time_t next_alarm =
+        cached_vespa_next_alarm_timestamp();
+
+    if (next_alarm <= 0) {
+      return;
+    }
+
+    struct tm *local_ptr =
+        localtime(&next_alarm);
+
+    if (!local_ptr) {
+      return;
+    }
+
+    const struct tm local = *local_ptr;
+    char time_text[8];
+
+    snprintf(
+      time_text,
+      sizeof(time_text),
+      "%02d:%02d",
+      local.tm_hour,
+      local.tm_min
+    );
+
+    snprintf(
+      vertical_time_text,
+      sizeof(vertical_time_text),
+      "%c\n%c\n%c\n%c\n%c",
+      time_text[0],
+      time_text[1],
+      time_text[2],
+      time_text[3],
+      time_text[4]
+    );
+
+    bubble_text = vertical_time_text;
   }
 
-  struct tm *local_ptr =
-      localtime(&next_alarm);
-
-  if (!local_ptr) {
-    return;
-  }
-
-  const struct tm local = *local_ptr;
-  char time_text[8];
-
-  snprintf(
-    time_text,
-    sizeof(time_text),
-    "%02d:%02d",
-    local.tm_hour,
-    local.tm_min
-  );
-
-  char vertical_text[16];
-
-  snprintf(
-    vertical_text,
-    sizeof(vertical_text),
-    "%c\n%c\n%c\n%c\n%c",
-    time_text[0],
-    time_text[1],
-    time_text[2],
-    time_text[3],
-    time_text[4]
-  );
-
-  /*
-   * Links und oben jeweils exakt 10 px Abstand.
-   * Keine Spitze: nur die abgerundete Sprechblase.
-   */
   const GRect bubble_rect = GRect(
     bounds.origin.x + 10,
     (int16_t)(vespa_top + 10),
@@ -584,9 +603,6 @@ static void draw_vespa_next_alarm_bubble(
     122
   );
 
-  /*
-   * Außen schwarz, innen weiß: runde Kontur ohne zusätzliche API.
-   */
   graphics_context_set_fill_color(
     ctx,
     GColorBlack
@@ -614,28 +630,55 @@ static void draw_vespa_next_alarm_bubble(
     GCornersAll
   );
 
+  const GRect content_rect = GRect(
+    bubble_rect.origin.x + 2,
+    bubble_rect.origin.y + 2,
+    bubble_rect.size.w - 4,
+    bubble_rect.size.h - 4
+  );
+
+  const GSize text_size =
+      graphics_text_layout_get_content_size(
+        bubble_text,
+        bubble_font,
+        content_rect,
+        GTextOverflowModeTrailingEllipsis,
+        GTextAlignmentCenter
+      );
+
+  const int16_t centered_height =
+      text_size.h < content_rect.size.h
+          ? text_size.h
+          : content_rect.size.h;
+
+  int16_t centered_y =
+      content_rect.origin.y +
+      (content_rect.size.h - centered_height) / 2;
+
+  /* Only the vertical time needs extra optical correction. */
+  if (!intake_locked) {
+    centered_y -= 5;
+  }
+
   graphics_context_set_text_color(
     ctx,
     GColorBlack
   );
   graphics_draw_text(
     ctx,
-    vertical_text,
-    fonts_get_system_font(
-      FONT_KEY_GOTHIC_18_BOLD
-    ),
+    bubble_text,
+    bubble_font,
     GRect(
-      bubble_rect.origin.x,
-      bubble_rect.origin.y + 9,
-      bubble_rect.size.w,
-      bubble_rect.size.h - 12
+      content_rect.origin.x,
+      centered_y,
+      content_rect.size.w,
+      centered_height
     ),
     GTextOverflowModeTrailingEllipsis,
     GTextAlignmentCenter,
     NULL
   );
 }
-
 static void canvas_update_proc(
     Layer *layer,
     GContext *ctx
@@ -1248,6 +1291,20 @@ static void window_load(Window *window) {
   s_header_font =
       fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD);
 
+  s_nurse_japanese_font =
+      fonts_load_custom_font(
+        resource_get_handle(
+          RESOURCE_ID_FONT_NURSE_JP_20
+        )
+      );
+
+  if (!s_nurse_japanese_font) {
+    APP_LOG(
+      APP_LOG_LEVEL_WARNING,
+      "Japanese nurse font could not be loaded"
+    );
+  }
+
   s_alert_pattern_dark_bitmap =
       gbitmap_create_with_resource(
         RESOURCE_ID_IMAGE_SEIGAIHA_DARK
@@ -1405,6 +1462,13 @@ static void window_disappear(Window *window) {
 static void window_unload(Window *window) {
   s_alarm_transitioning_to_pills = false;
   s_alarm_navigation_locked = false;
+
+  if (s_nurse_japanese_font) {
+    fonts_unload_custom_font(
+      s_nurse_japanese_font
+    );
+    s_nurse_japanese_font = NULL;
+  }
 
   pill_physics_stop();
   pill_renderer_deinit();

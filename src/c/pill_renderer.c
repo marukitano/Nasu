@@ -782,8 +782,7 @@ void draw_pen_alert_animation(
     return;
   }
 
-  const MedicationTime visible_time =
-      current_medication_time();
+  const time_t now = time(NULL);
   const MedicationSettings *pen = NULL;
   uint8_t pen_index = 0;
 
@@ -796,10 +795,12 @@ void draw_pen_alert_animation(
         &s_medications[index];
 
     if (
-      candidate->enabled &&
       candidate->icon_set &&
       candidate->symbol == MEDICATION_SYMBOL_PEN &&
-      candidate->time == (uint8_t)visible_time
+      medication_is_due_at(
+        candidate,
+        now
+      )
     ) {
       pen = candidate;
       pen_index = index;
