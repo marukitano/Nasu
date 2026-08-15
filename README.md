@@ -35,7 +35,7 @@ Medikamente bestätigt sind.
 - Vier konfigurierbare Tageszeiten: Früh, Mittag, Abend und Nacht
 - Einstellbare Tablettenform, Farbe, Größe und Beschriftung
 - Einstellbare Farben für Pen und Akzent
-- Tabletten fallen von oben in den Erinnerungsbildschirm und reagieren danach auf die Bewegung der Uhr
+- Realistische Pillensimulation: Die konfigurierten Medikamente liegen als physikalische Objekte auf dem Erinnerungsbildschirm und reagieren auf die Bewegung der Uhr
 - Optionales dezentes japanisches Hintergrundmuster
 - **Gedrückthalten zum Bestätigen**
 - Scrollen per Touch und Tasten
@@ -58,9 +58,9 @@ dass die Darstellung möglichst dem echten Medikament entspricht.**
 Auf der Uhr siehst du damit dieselben Tabletten, die du beim Einnehmen
 auch in der Hand hältst.
 
-Im Erinnerungsbildschirm fallen die Tabletten in eine kleine
-**Physiksimulation**. Sie liegen und bewegen sich auf dem Display wie
-reale Tabletten und reagieren auf die Bewegung der Uhr.
+Im Erinnerungsbildschirm werden die Tabletten in einer kleinen
+**Physiksimulation** dargestellt. Sie liegen und bewegen sich auf dem
+Display wie reale Tabletten und reagieren auf die Bewegung der Uhr.
 
 Direkt darunter zeigt Nasu eine detaillierte Einnahmeliste. Dort stehen
 Name, Wirkung bzw. Beschreibung, Dosierung und Menge des Medikaments –
@@ -215,7 +215,7 @@ stays with you until the medication that is due has been confirmed.
 - Four configurable dayparts: morning, noon, evening and night
 - Configurable pill shape, color, size and imprint
 - Configurable pen body and accent colors
-- Pills fall into the reminder screen from above and then react to watch movement
+- Realistic pill simulation: configured medications appear as physical objects on the reminder screen and react to movement of the watch
 - Optional subtle Japanese background pattern
 - Deliberate **hold-to-confirm** interaction
 - Touch and button scrolling
@@ -237,7 +237,7 @@ can be configured so the on-screen medication resembles the real pill
 as closely as possible.** The goal is that the pills shown on the watch
 look like the ones you actually hold in your hand when taking them.
 
-On the reminder screen, the pills fall into a small **physics
+On the reminder screen, the pills are shown in a small **physics
 simulation**. They rest and move around the display like physical
 tablets and react to movement of the watch.
 
