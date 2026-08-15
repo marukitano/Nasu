@@ -10,6 +10,17 @@ Tabletten oder den Injektionspen, alarmiert per Ton und/oder Vibration
 und wartet auf eine bewusste Bestätigung, bevor die Einnahme als
 erledigt markiert wird.
 
+### Die Idee hinter Nasu
+
+Der Name **Nasu** spielt auf das japanische **ナース** (*nāsu*) an –
+das japanische Lehnwort für **Nurse / Krankenschwester**.
+
+Die Idee ist einfach: Du hast deine kleine Krankenschwester immer am
+Handgelenk dabei. Sie begleitet dich auf ihrer Vespa und erinnert dich
+daran, deine Medikamente zu nehmen. Im Alarmfall meldet sie sich direkt,
+führt dich zum Einnahmebildschirm und bleibt bei dir, bis die fälligen
+Medikamente bestätigt sind.
+
 <p align="center">
   <img src="docs/screenshots/screenshot.png" width="30%" alt="Nasu – screenshot">
   <img src="docs/screenshots/screenshot2.png" width="30%" alt="Nasu – screenshot2">
@@ -41,12 +52,30 @@ erledigt markiert wird.
 Wird ein Medikament fällig, öffnet Nasu einen eigenen
 Erinnerungsbildschirm.
 
-Tabletten verhalten sich wie kleine physikalische Objekte und reagieren
-auf die Bewegung der Uhr. Injektionsmedikamente werden als animierter
-Pen dargestellt.
+Die Tabletten werden nicht nur als generische Symbole dargestellt:
+**Form, Farbe, Größe und Beschriftung können so konfiguriert werden,
+dass die Darstellung möglichst dem echten Medikament entspricht.**
+Auf der Uhr siehst du damit dieselben Tabletten, die du beim Einnehmen
+auch in der Hand hältst.
 
-Sind Tabletten und ein Pen gleichzeitig fällig, werden sie als getrennte
+Im Erinnerungsbildschirm fallen die Tabletten in eine kleine
+**Physiksimulation**. Sie liegen und bewegen sich auf dem Display wie
+reale Tabletten und reagieren auf die Bewegung der Uhr.
+
+Direkt darunter zeigt Nasu eine detaillierte Einnahmeliste. Dort stehen
+Name, Wirkung bzw. Beschreibung, Dosierung und Menge des Medikaments –
+praktisch, wenn man gerade nicht mehr weiß, welche Tablette welche ist
+oder wofür sie gedacht ist.
+
+**Injektionspens werden ausdrücklich unterstützt.** Statt einer Tablette
+zeigt Nasu einen animierten Pen mit den konfigurierten Farben. Sind
+Tabletten und ein Pen gleichzeitig fällig, werden sie als getrennte
 Bestätigungsgruppen angezeigt.
+
+Für Medikamente lassen sich **tägliche, wöchentliche und monatliche
+Einnahmepläne** konfigurieren. Dadurch eignet sich Nasu sowohl für
+regelmäßige tägliche Medikamente als auch für Präparate, die nur an
+bestimmten Wochentagen oder einmal pro Monat genommen werden.
 
 Eine Einnahme wird nicht durch einen kurzen versehentlichen Tastendruck
 bestätigt. Stattdessen ist bewusstes Gedrückthalten mit visueller
@@ -145,6 +174,12 @@ Nasu ist freie Software unter der
 
 Siehe [`LICENSE`](LICENSE).
 
+Die App enthält den Font **Kosugi Maru Regular**,
+Copyright © 2010 The Kosugi Maru Project Authors,
+lizenziert unter der **Apache License 2.0**.
+Die zugehörige Lizenz liegt unter
+[`resources/fonts/LICENSE-KosugiMaru.txt`](resources/fonts/LICENSE-KosugiMaru.txt).
+
 ---
 
 ## English
@@ -155,6 +190,16 @@ Siehe [`LICENSE`](LICENSE).
 When medication is due, the watch displays the configured pills or
 injection pen, alerts you with sound and/or vibration, and waits for a
 deliberate confirmation before marking it as taken.
+
+### The idea behind Nasu
+
+The name **Nasu** is a play on the Japanese **ナース** (*nāsu*) –
+the Japanese loanword for **nurse**.
+
+The idea is simple: your little nurse is always with you on your wrist.
+She accompanies you on her Vespa and reminds you to take your
+medication. When an alarm fires, she leads you to the intake screen and
+stays with you until the medication that is due has been confirmed.
 
 <p align="center">
   <img src="docs/screenshots/screenshot.png" width="30%" alt="Nasu – screenshot">
@@ -187,11 +232,28 @@ deliberate confirmation before marking it as taken.
 When medication becomes due, Nasu opens a dedicated reminder
 screen.
 
-Pills behave like small physical objects and react to movement of the
-watch. Injection medications are displayed as an animated pen.
+Pills are not shown as generic symbols. **Shape, color, size and imprint
+can be configured so the on-screen medication resembles the real pill
+as closely as possible.** The goal is that the pills shown on the watch
+look like the ones you actually hold in your hand when taking them.
 
-If pills and a pen are due at the same time, they are presented as
-separate confirmation groups.
+On the reminder screen, the pills fall into a small **physics
+simulation**. They rest and move around the display like physical
+tablets and react to movement of the watch.
+
+Directly below the simulation, Nasu shows a detailed intake list with
+the medication name, effect or description, dosage and quantity. This
+is useful when you no longer remember which pill is which or what it is
+for.
+
+**Injection pens are explicitly supported.** Instead of a pill, Nasu
+shows an animated pen using the configured colors. If pills and a pen
+are due at the same time, they are presented as separate confirmation
+groups.
+
+Medication can be scheduled **daily, weekly or monthly**, so Nasu works
+both for regular everyday medication and for treatments that are only
+taken on selected weekdays or once per month.
 
 Medication is not marked as taken by a short accidental button press.
 Confirmation requires a deliberate press-and-hold action with visual
@@ -288,3 +350,9 @@ Nasu is free software released under the
 **GNU General Public License v3.0**.
 
 See [`LICENSE`](LICENSE).
+
+The app includes **Kosugi Maru Regular**,
+Copyright © 2010 The Kosugi Maru Project Authors,
+licensed under the **Apache License 2.0**.
+The corresponding license is included at
+[`resources/fonts/LICENSE-KosugiMaru.txt`](resources/fonts/LICENSE-KosugiMaru.txt).
