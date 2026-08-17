@@ -20,6 +20,8 @@
 #define PILL_SELECT_MARKER_PRESS_OFFSET 2
 #define PILL_SELECT_MARKER_PRESSED_WIDTH   (PILL_SELECT_MARKER_WIDTH + PILL_SELECT_MARKER_PRESS_OFFSET)
 
+#define POST_CONFIRMATION_CLOSE_DELAY_MS 10000
+
 static GColor theme_foreground_color(void);
 static bool scroll_input_allowed(void);
 
@@ -35,6 +37,7 @@ static GBitmap *s_alert_pattern_light_bitmap;
 static GFont s_nurse_japanese_font;
 static AppTimer *s_ui_timer;
 static AppTimer *s_alarm_screen_timer;
+static AppTimer *s_post_confirmation_close_timer;
 static bool s_refresh_after_vespa_scroll;
 static bool s_alarm_transitioning_to_pills;
 static bool s_alarm_navigation_locked;
@@ -79,6 +82,10 @@ static void update_ui_timer_activity(void);
 static void alarm_screen_timer_handler(
     void *context
 );
+static void post_confirmation_close_timer_handler(
+    void *context
+);
+static void schedule_post_confirmation_close(void);
 static void scroll_up_handler(
     ClickRecognizerRef recognizer,
     void *context
@@ -348,6 +355,56 @@ static void draw_pill_select_marker(
 
 void medication_ui_pause_animation_timer(void) {
   cancel_timer(&s_ui_timer);
+}
+
+void medication_ui_cancel_post_confirmation_close(void) {
+  cancel_timer(&s_post_confirmation_close_timer);
+}
+
+static void post_confirmation_close_timer_handler(
+    void *context
+) {
+  (void)context;
+  s_post_confirmation_close_timer = NULL;
+
+  /*
+   * Defensive guards: close only if the user is still sitting on the
+   * settled Vespa page. A real move into the medication list cancels
+   * this timer before that move begins.
+   */
+  if (
+    !s_canvas_layer ||
+    s_transfer_screen_active ||
+    s_alarm_navigation_locked ||
+    s_scroll.mode != SCROLL_IDLE ||
+    s_scroll.snap_index != scroll_vespa_snap_index()
+  ) {
+    return;
+  }
+
+  APP_LOG(
+    APP_LOG_LEVEL_INFO,
+    "Post-confirmation Vespa timeout: closing app"
+  );
+
+  back_button_handler(NULL, NULL);
+}
+
+static void schedule_post_confirmation_close(void) {
+  medication_ui_cancel_post_confirmation_close();
+
+  s_post_confirmation_close_timer = app_timer_register(
+    POST_CONFIRMATION_CLOSE_DELAY_MS,
+    post_confirmation_close_timer_handler,
+    NULL
+  );
+
+  if (!s_post_confirmation_close_timer) {
+    APP_LOG(
+      APP_LOG_LEVEL_ERROR,
+      "Could not schedule post-confirmation close"
+    );
+  }
 }
 
 void mark_scene_dirty(void) {
@@ -1027,6 +1084,7 @@ static void alarm_screen_timer_handler(
 
 void medication_ui_begin_alarm_sequence(void) {
   cancel_timer(&s_alarm_screen_timer);
+  medication_ui_cancel_post_confirmation_close();
   s_refresh_after_vespa_scroll = false;
   s_alarm_navigation_locked = false;
   s_alarm_transitioning_to_pills = false;
@@ -1084,6 +1142,7 @@ void medication_ui_begin_alarm_sequence(void) {
 
 void medication_ui_return_to_vespa_after_confirmation(void) {
   cancel_timer(&s_alarm_screen_timer);
+  medication_ui_cancel_post_confirmation_close();
   s_alarm_transitioning_to_pills = false;
 
   /*
@@ -1133,7 +1192,15 @@ void medication_ui_scroll_settled(void) {
 
   if (s_alarm_active && INTAKE_ROW_COUNT > 0) {
     medication_ui_begin_alarm_sequence();
+    return;
   }
+
+  /*
+   * Dieser Pfad wird nur erreicht, wenn der automatische Rückscroll nach
+   * einer erfolgreichen letzten Bestätigung auf der Vespa eingerastet ist.
+   * Deshalb hier direkt den 10-Sekunden-Timer starten.
+   */
+  schedule_post_confirmation_close();
 }
 
 static void scroll_up_handler(
@@ -1447,6 +1514,7 @@ static void window_disappear(Window *window) {
   pill_physics_update_activity();
 
   cancel_timer(&s_alarm_screen_timer);
+  medication_ui_cancel_post_confirmation_close();
   s_refresh_after_vespa_scroll = false;
   cancel_timer(&s_ui_timer);
   confirmation_cancel_animation();
@@ -1473,6 +1541,7 @@ static void window_unload(Window *window) {
   pill_physics_stop();
   pill_renderer_deinit();
   cancel_timer(&s_alarm_screen_timer);
+  medication_ui_cancel_post_confirmation_close();
   s_refresh_after_vespa_scroll = false;
   confirmation_cancel_transfer_timers();
   cancel_timer(&s_ui_timer);
@@ -1551,6 +1620,7 @@ void medication_ui_deinit(void) {
   s_alarm_navigation_locked = false;
 
   cancel_timer(&s_alarm_screen_timer);
+  medication_ui_cancel_post_confirmation_close();
   s_refresh_after_vespa_scroll = false;
   confirmation_cancel_transfer_timers();
   cancel_timer(&s_ui_timer);

@@ -15,6 +15,7 @@ void mark_scene_dirty(void);
 void refresh_app_screen_state(void);
 void medication_ui_begin_alarm_sequence(void);
 void medication_ui_return_to_vespa_after_confirmation(void);
+void medication_ui_cancel_post_confirmation_close(void);
 void medication_ui_scroll_settled(void);
 void medication_ui_pill_select_marker_press(void);
 void medication_ui_pill_select_marker_release(void);

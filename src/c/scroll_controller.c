@@ -917,13 +917,34 @@ static void start_edge_bounce(int direction) {
 }
 
 bool step_snap_index(int direction) {
+  const int current_index =
+      s_scroll.snap_index;
+
   const int next_index =
       clamp_snap_index(
-        s_scroll.snap_index +
+        current_index +
         direction
       );
 
-  if (next_index == s_scroll.snap_index) {
+  /*
+   * Auto-Close nur bei einem echten Wechsel Vespa -> Medikamentenliste
+   * abbrechen.
+   *
+   * Hardware: Down-Taste => direction +1.
+   * Touch: Finger nach oben => total_delta_y < 0 => direction +1.
+   *
+   * Finger nach unten auf der Vespa ergibt direction -1 und nur den
+   * normalen Edge-Bounce. Dieser Fall darf den Timer NICHT abbrechen.
+   */
+  if (
+    direction > 0 &&
+    current_index == scroll_vespa_snap_index() &&
+    next_index > current_index
+  ) {
+    medication_ui_cancel_post_confirmation_close();
+  }
+
+  if (next_index == current_index) {
     const bool valid_edge =
         (
           s_scroll.snap_index ==
