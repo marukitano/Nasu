@@ -2204,44 +2204,30 @@ void alarm_confirmation_received(
       continue;
     }
 
-    if (
-      s_medications[index].time ==
-          MEDICATION_TIME_INTERVAL
-    ) {
-      IntervalMedicationAlarmState *state = NULL;
-
-      if (
-        interval_alarm_state_at(
-          index,
-          now,
-          NULL,
-          NULL,
-          &state
-        ) &&
-        state &&
-        !state->confirmed
-      ) {
-        state->confirmed = 1;
-        interval_changed = true;
-      }
-
-      continue;
-    }
-
-    RegularMedicationAlarmState *state = NULL;
+    MedicationAlarmState *state = NULL;
 
     if (
-      regular_alarm_state_at(
+      !medication_alarm_state_at(
         index,
         now,
         NULL,
         NULL,
         &state
-      ) &&
-      state &&
-      !state->confirmed
+      ) ||
+      !state ||
+      state->confirmed
     ) {
-      state->confirmed = 1;
+      continue;
+    }
+
+    state->confirmed = 1;
+
+    if (
+      s_medications[index].time ==
+          MEDICATION_TIME_INTERVAL
+    ) {
+      interval_changed = true;
+    } else {
       regular_changed = true;
     }
   }
