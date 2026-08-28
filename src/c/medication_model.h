@@ -14,15 +14,15 @@ bool medication_interval_window_at(
     time_t *window_start,
     time_t *window_end
 );
-bool medication_is_due_at(
-    const MedicationSettings *medication,
-    time_t timestamp
-);
 bool medication_runtime_view(
     uint8_t medication_index,
     MedicationRuntimeView *view
 );
 MedicationTime current_medication_time(void);
+bool medication_group_first_index(
+    MedicationSymbol symbol,
+    uint8_t *medication_index
+);
 bool medication_group_is_due(
     MedicationSymbol symbol
 );

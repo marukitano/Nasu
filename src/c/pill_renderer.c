@@ -782,33 +782,22 @@ void draw_pen_alert_animation(
     return;
   }
 
-  const time_t now = time(NULL);
-  const MedicationSettings *pen = NULL;
   uint8_t pen_index = 0;
 
-  for (
-    uint8_t index = 0;
-    index < s_medication_count;
-    index++
+  if (
+    !medication_group_first_index(
+      MEDICATION_SYMBOL_PEN,
+      &pen_index
+    ) ||
+    pen_index >= s_medication_count
   ) {
-    const MedicationSettings *candidate =
-        &s_medications[index];
-
-    if (
-      candidate->icon_set &&
-      candidate->symbol == MEDICATION_SYMBOL_PEN &&
-      medication_is_due_at(
-        candidate,
-        now
-      )
-    ) {
-      pen = candidate;
-      pen_index = index;
-      break;
-    }
+    return;
   }
 
-  if (!pen) {
+  const MedicationSettings *pen =
+      &s_medications[pen_index];
+
+  if (!pen->icon_set) {
     return;
   }
 

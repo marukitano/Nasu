@@ -214,89 +214,6 @@ bool medication_is_scheduled_on_date(
   return false;
 }
 
-bool medication_is_due_at(
-    const MedicationSettings *medication,
-    time_t timestamp
-) {
-  if (!medication || !medication->enabled) {
-    return false;
-  }
-
-  if (
-    medication->time ==
-        MEDICATION_TIME_INTERVAL
-  ) {
-    for (
-      uint8_t index = 0;
-      index < s_medication_count;
-      index++
-    ) {
-      if (medication == &s_medications[index]) {
-        return medication_interval_window_at(
-          index,
-          timestamp,
-          NULL,
-          NULL
-        );
-      }
-    }
-
-    return false;
-  }
-
-  struct tm *local_ptr = localtime(&timestamp);
-
-  if (!local_ptr) {
-    return false;
-  }
-
-  struct tm schedule_date = *local_ptr;
-  const int minute =
-      schedule_date.tm_hour * 60 +
-      schedule_date.tm_min;
-  const MedicationTime slot =
-      medication_time_for_minute(minute);
-
-  /*
-   * Das Nachtfenster läuft über Mitternacht:
-   *
-   *   Dienstag 22:00 -> Mittwoch 06:00
-   *
-   * Ein für "Dienstag Nacht" geplantes Medikament bleibt deshalb auch
-   * Mittwoch um 01:00 Teil des Dienstag-Fensters. Der Alarm-Scheduler
-   * verwendet dafür ebenfalls das Datum des Fensterstarts.
-   */
-  if (
-    slot == MEDICATION_TIME_NIGHT &&
-    minute < s_dayparts.morning
-  ) {
-    schedule_date.tm_mday -= 1;
-    schedule_date.tm_isdst = -1;
-
-    const time_t normalized =
-        mktime(&schedule_date);
-
-    if (normalized <= 0) {
-      return false;
-    }
-
-    local_ptr = localtime(&normalized);
-
-    if (!local_ptr) {
-      return false;
-    }
-
-    schedule_date = *local_ptr;
-  }
-
-  return
-      medication->time == (uint8_t)slot &&
-      medication_is_scheduled_on_date(
-        medication,
-        &schedule_date
-      );
-}
-
 bool medication_runtime_view(
     uint8_t medication_index,
     MedicationRuntimeView *view
@@ -413,43 +330,62 @@ static bool medication_matches_group(
       );
 }
 
-bool medication_group_is_due(
-    MedicationSymbol symbol
+bool medication_group_first_index(
+    MedicationSymbol symbol,
+    uint8_t *medication_index
 ) {
   const uint16_t active_mask =
       alarm_active_medication_mask();
+  const time_t timestamp =
+      active_mask == 0
+          ? time(NULL)
+          : 0;
 
-  if (active_mask != 0) {
-    for (
-      uint8_t index = 0;
-      index < s_medication_count;
-      index++
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    if (
+      s_medications[index].symbol !=
+          (uint8_t)symbol
     ) {
-      if (
-        (
-          active_mask &
-          (uint16_t)(1u << index)
-        ) != 0 &&
-        s_medications[index].symbol ==
-            (uint8_t)symbol
-      ) {
-        return true;
-      }
+      continue;
     }
 
-    return false;
+    const uint16_t bit =
+        (uint16_t)(1u << index);
+
+    const bool selected =
+        active_mask != 0
+            ? (active_mask & bit) != 0
+            : medication_matches_group(
+                index,
+                timestamp,
+                symbol
+              );
+
+    if (!selected) {
+      continue;
+    }
+
+    if (medication_index) {
+      *medication_index = index;
+    }
+
+    return true;
   }
 
-  const uint8_t symbol_mask =
-      (uint8_t)(1u << symbol);
+  return false;
+}
 
-  return
-      (
-        alarm_unconfirmed_symbol_mask_at(
-          time(NULL)
-        ) &
-        symbol_mask
-      ) != 0;
+bool medication_group_is_due(
+    MedicationSymbol symbol
+) {
+  return medication_group_first_index(
+    symbol,
+    NULL
+  );
 }
 
 bool active_medication_symbol(
