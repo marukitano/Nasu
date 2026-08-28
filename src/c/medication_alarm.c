@@ -1005,6 +1005,31 @@ static uint16_t alarm_unconfirmed_medication_mask_at(
   return mask;
 }
 
+static time_t reminder_due_timestamp_for_state(
+    time_t occurrence_start,
+    time_t occurrence_end,
+    const MedicationAlarmState *state
+) {
+  if (
+    !state ||
+    state->confirmed ||
+    occurrence_start <= 0 ||
+    occurrence_end <= occurrence_start
+  ) {
+    return 0;
+  }
+
+  const time_t due =
+      state->last_reminder <
+          (int32_t)occurrence_start
+          ? occurrence_start
+          : (time_t)state->last_reminder +
+              (time_t)s_alarm_reminder_interval_minutes *
+                  60;
+
+  return due < occurrence_end ? due : 0;
+}
+
 static uint16_t alarm_event_medication_mask_at(
     time_t timestamp
 ) {
@@ -1019,48 +1044,31 @@ static uint16_t alarm_event_medication_mask_at(
     time_t occurrence_end = 0;
     MedicationAlarmState *state = NULL;
 
-    const bool occurrence_valid =
-        medication_alarm_state_at(
-          index,
-          timestamp,
-          &occurrence_start,
-          &occurrence_end,
-          &state
-        ) &&
-        state;
-
-    const int32_t last_reminder =
-        occurrence_valid
-            ? state->last_reminder
-            : 0;
-    const bool confirmed =
-        occurrence_valid &&
-        state->confirmed != 0;
-
     if (
-      !occurrence_valid ||
-      confirmed ||
-      timestamp >= occurrence_end
+      !medication_alarm_state_at(
+        index,
+        timestamp,
+        &occurrence_start,
+        &occurrence_end,
+        &state
+      ) ||
+      !state
     ) {
       continue;
     }
 
-    bool event_due =
-        last_reminder <
-            (int32_t)occurrence_start;
+    const time_t due =
+        reminder_due_timestamp_for_state(
+          occurrence_start,
+          occurrence_end,
+          state
+        );
 
-    if (!event_due) {
-      const time_t next_reminder =
-          (time_t)last_reminder +
-          (time_t)s_alarm_reminder_interval_minutes *
-              60;
-
-      event_due =
-          timestamp >= next_reminder &&
-          next_reminder < occurrence_end;
-    }
-
-    if (event_due) {
+    if (
+      due > 0 &&
+      timestamp >= due &&
+      timestamp < occurrence_end
+    ) {
       mask |= (uint16_t)(1u << index);
     }
   }
@@ -1089,7 +1097,11 @@ bool alarm_medication_is_unconfirmed_due_at(
 uint8_t alarm_unconfirmed_symbol_mask_at(
     time_t timestamp
 ) {
-  uint8_t mask = 0;
+  const uint16_t medication_mask =
+      alarm_unconfirmed_medication_mask_at(
+        timestamp
+      );
+  uint8_t symbol_mask = 0;
 
   for (
     uint8_t index = 0;
@@ -1097,21 +1109,21 @@ uint8_t alarm_unconfirmed_symbol_mask_at(
     index++
   ) {
     if (
-      !alarm_medication_is_unconfirmed_due_at(
-        index,
-        timestamp
-      )
+      (
+        medication_mask &
+        (uint16_t)(1u << index)
+      ) == 0
     ) {
       continue;
     }
 
-    mask |=
+    symbol_mask |=
         (uint8_t)(
           1u << s_medications[index].symbol
         );
   }
 
-  return mask;
+  return symbol_mask;
 }
 
 bool alarm_intake_navigation_lock_required(void) {
@@ -1302,28 +1314,20 @@ static time_t next_reminder_timestamp_for_state(
     time_t occurrence_end,
     const MedicationAlarmState *state
 ) {
-  if (!state || state->confirmed) {
+  time_t candidate =
+      reminder_due_timestamp_for_state(
+        occurrence_start,
+        occurrence_end,
+        state
+      );
+
+  if (candidate <= 0) {
     return 0;
   }
 
-  time_t candidate;
-
-  if (
-    state->last_reminder <
-        (int32_t)occurrence_start
-  ) {
+  if (candidate <= now) {
     candidate =
         ((now / 60) + 1) * 60;
-  } else {
-    candidate =
-        (time_t)state->last_reminder +
-        (time_t)s_alarm_reminder_interval_minutes *
-            60;
-
-    if (candidate <= now) {
-      candidate =
-          ((now / 60) + 1) * 60;
-    }
   }
 
   return
