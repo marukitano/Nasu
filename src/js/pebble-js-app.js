@@ -43,6 +43,7 @@ var MED_INTERVAL_HOURS_KEY = 29;
 var SHOW_JAPANESE_PATTERN_KEY = 30;
 var MED_INTERVAL_START_HOUR_KEY = 31;
 var MED_INTERVAL_START_MINUTE_KEY = 32;
+var MED_ALARM_MINUTE_KEY = 33;
 
 
 var COMMAND_RESET = 0;
@@ -650,6 +651,32 @@ function currentMedications() {
   return [cloneDefaultMedication()];
 }
 
+function effectiveMedicationAlarmMinute(
+    medication,
+    dayparts
+) {
+  var minute;
+
+  if (medication.time === 4) {
+    minute = medication.intervalStart;
+  } else {
+    var starts = [
+      dayparts.morning,
+      dayparts.noon,
+      dayparts.evening,
+      dayparts.night
+    ];
+
+    minute = starts[medication.time];
+  }
+
+  if (medication.symbol === 1) {
+    minute = (minute + 2) % MINUTES_PER_DAY;
+  }
+
+  return minute;
+}
+
 function sendMessage(message, next) {
   Pebble.sendAppMessage(
     message,
@@ -669,6 +696,7 @@ function sendMessage(message, next) {
 
 function sendMedicationList(
     medications,
+    dayparts,
     commitSettings
 ) {
   var reset = {};
@@ -678,6 +706,7 @@ function sendMedicationList(
   sendMessage(reset, function() {
     sendMedicationAt(
       medications,
+      dayparts,
       0,
       commitSettings
     );
@@ -686,6 +715,7 @@ function sendMedicationList(
 
 function sendMedicationAt(
     medications,
+    dayparts,
     index,
     commitSettings
 ) {
@@ -699,6 +729,15 @@ function sendMedicationAt(
 
   var medication = medications[index];
   var message = {};
+  var effectiveAlarmMinute =
+      effectiveMedicationAlarmMinute(
+        medication,
+        dayparts
+      );
+  var effectiveIntervalStart =
+      medication.time === 4
+          ? effectiveAlarmMinute
+          : medication.intervalStart;
   var iconSet = medication.iconSet === true;
   var shape = iconSet && integerInRange(medication.shape, 0, 4)
       ? medication.shape
@@ -724,11 +763,13 @@ function sendMedicationAt(
   message[MED_EFFECT_KEY] = medication.effect || '';
   message[MED_QUANTITY_KEY] = medication.quantity;
   message[MED_TIME_KEY] = medication.time;
+  message[MED_ALARM_MINUTE_KEY] =
+      effectiveAlarmMinute;
   message[MED_INTERVAL_HOURS_KEY] = medication.intervalHours;
   message[MED_INTERVAL_START_HOUR_KEY] =
-      Math.floor(medication.intervalStart / 60);
+      Math.floor(effectiveIntervalStart / 60);
   message[MED_INTERVAL_START_MINUTE_KEY] =
-      medication.intervalStart % 60;
+      effectiveIntervalStart % 60;
   message[MED_SCHEDULE_KEY] = medication.schedule;
   message[MED_DAY_KEY] = medication.day;
   message[MED_SYMBOL_KEY] = iconSet &&
@@ -747,6 +788,7 @@ function sendMedicationAt(
   sendMessage(message, function() {
     sendMedicationAt(
       medications,
+      dayparts,
       index + 1,
       commitSettings
     );
@@ -802,6 +844,7 @@ function sendAllSettings(
 
   sendMedicationList(
     medications,
+    dayparts,
     commitSettings
   );
 }

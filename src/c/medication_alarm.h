@@ -4,6 +4,7 @@
 
 /* Alarm scheduling, wakeups, audio and vibration. */
 bool alarm_visuals_paused(void);
+uint16_t alarm_active_medication_mask(void);
 void medication_alarm_init(void);
 void medication_alarm_deinit(void);
 void alarm_confirmation_received(

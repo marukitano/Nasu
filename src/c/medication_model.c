@@ -424,6 +424,18 @@ static bool medication_matches_group(
 
   const MedicationSettings *medication =
       &s_medications[medication_index];
+  const uint16_t active_mask =
+      alarm_active_medication_mask();
+
+  if (
+    active_mask != 0 &&
+    (
+      active_mask &
+      (uint16_t)(1u << medication_index)
+    ) == 0
+  ) {
+    return false;
+  }
 
   return
       medication->symbol ==
@@ -437,13 +449,40 @@ static bool medication_matches_group(
 bool medication_group_is_due(
     MedicationSymbol symbol
 ) {
+  const uint16_t active_mask =
+      alarm_active_medication_mask();
+
+  if (active_mask != 0) {
+    for (
+      uint8_t index = 0;
+      index < s_medication_count;
+      index++
+    ) {
+      if (
+        (
+          active_mask &
+          (uint16_t)(1u << index)
+        ) != 0 &&
+        s_medications[index].symbol ==
+            (uint8_t)symbol
+      ) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   const uint8_t symbol_mask =
       (uint8_t)(1u << symbol);
 
   return
-      (alarm_unconfirmed_symbol_mask_at(
-        time(NULL)
-      ) & symbol_mask) != 0;
+      (
+        alarm_unconfirmed_symbol_mask_at(
+          time(NULL)
+        ) &
+        symbol_mask
+      ) != 0;
 }
 
 bool active_medication_symbol(

@@ -42,6 +42,10 @@ static MedicationIntervalSettings
     s_medication_intervals[MAX_MEDICATIONS];
 static MedicationIntervalSettings
     s_pending_medication_intervals[MAX_MEDICATIONS];
+static uint16_t
+    s_medication_alarm_minutes[MAX_MEDICATIONS];
+static uint16_t
+    s_pending_medication_alarm_minutes[MAX_MEDICATIONS];
 
 static const DaypartSettings s_default_dayparts = {
   .morning = DEFAULT_MORNING_START_MINUTE,
@@ -97,6 +101,13 @@ static void reset_medication_intervals(
 static bool persist_medication_intervals(void);
 static void load_medication_intervals(void);
 static bool apply_medication_intervals(bool save);
+static bool persist_medication_alarm_minutes(void);
+static void load_medication_alarm_minutes(void);
+static bool apply_medication_alarm_minutes(bool save);
+static bool read_medication_alarm_minute_from_message(
+    DictionaryIterator *iterator,
+    uint16_t *minute
+);
 const MedicationIntervalSettings *medication_interval_settings_at(
     uint8_t medication_index
 ) {
@@ -527,6 +538,7 @@ static void settings_ack_retry_handler(void *context) {
         persist_scalar_settings() &&
         persist_medication_list() &&
         persist_medication_intervals() &&
+        persist_medication_alarm_minutes() &&
         persist_medication_appearances();
 
     if (!s_settings_storage_verified) {
@@ -683,6 +695,246 @@ static bool medication_settings_valid(
   return
       settings->day >= 1 &&
       settings->day <= 31;
+}
+
+
+static bool medication_alarm_minute_valid(
+    uint16_t minute
+) {
+  return minute < DAYPART_MINUTES_PER_DAY;
+}
+
+static uint16_t fallback_medication_alarm_minute_at(
+    uint8_t medication_index
+) {
+  if (medication_index >= s_medication_count) {
+    return 0;
+  }
+
+  const MedicationSettings *medication =
+      &s_medications[medication_index];
+
+  if (
+    medication->time ==
+        MEDICATION_TIME_INTERVAL
+  ) {
+    const MedicationIntervalSettings *interval =
+        medication_interval_settings_at(
+          medication_index
+        );
+
+    if (!interval) {
+      return 0;
+    }
+
+    return
+        (uint16_t)(
+          interval->start_hour * 60 +
+          interval->start_minute
+        );
+  }
+
+  const uint16_t starts[] = {
+    s_dayparts.morning,
+    s_dayparts.noon,
+    s_dayparts.evening,
+    s_dayparts.night
+  };
+
+  uint16_t minute =
+      starts[medication->time];
+
+  /*
+   * Migration fallback only. Fresh settings receive the already shifted
+   * effective minute from the phone.
+   */
+  if (
+    medication->symbol ==
+        MEDICATION_SYMBOL_PEN
+  ) {
+    minute =
+        (uint16_t)(
+          (minute + 2) %
+          DAYPART_MINUTES_PER_DAY
+        );
+  }
+
+  return minute;
+}
+
+static void reset_medication_alarm_minutes(
+    uint16_t *minutes
+) {
+  if (!minutes) {
+    return;
+  }
+
+  for (
+    uint8_t index = 0;
+    index < MAX_MEDICATIONS;
+    index++
+  ) {
+    minutes[index] =
+        DAYPART_MINUTES_PER_DAY;
+  }
+}
+
+uint16_t medication_alarm_minute_at(
+    uint8_t medication_index
+) {
+  if (medication_index >= s_medication_count) {
+    return 0;
+  }
+
+  const uint16_t stored =
+      s_medication_alarm_minutes[
+        medication_index
+      ];
+
+  if (medication_alarm_minute_valid(stored)) {
+    return stored;
+  }
+
+  return fallback_medication_alarm_minute_at(
+    medication_index
+  );
+}
+
+static bool persist_medication_alarm_minutes(void) {
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    if (
+      !medication_alarm_minute_valid(
+        s_medication_alarm_minutes[index]
+      )
+    ) {
+      return false;
+    }
+  }
+
+  const int written = persist_write_data(
+    MEDICATION_ALARM_MINUTES_PERSIST_KEY,
+    s_medication_alarm_minutes,
+    sizeof(s_medication_alarm_minutes)
+  );
+
+  uint16_t verified[MAX_MEDICATIONS];
+  memset(verified, 0, sizeof(verified));
+
+  const int read = persist_read_data(
+    MEDICATION_ALARM_MINUTES_PERSIST_KEY,
+    verified,
+    sizeof(verified)
+  );
+
+  return
+      written ==
+          (int)sizeof(s_medication_alarm_minutes) &&
+      read == (int)sizeof(verified) &&
+      memcmp(
+        verified,
+        s_medication_alarm_minutes,
+        sizeof(verified)
+      ) == 0;
+}
+
+static void load_medication_alarm_minutes(void) {
+  reset_medication_alarm_minutes(
+    s_medication_alarm_minutes
+  );
+
+  if (
+    persist_exists(
+      MEDICATION_ALARM_MINUTES_PERSIST_KEY
+    ) &&
+    persist_get_size(
+      MEDICATION_ALARM_MINUTES_PERSIST_KEY
+    ) ==
+        (int)sizeof(s_medication_alarm_minutes)
+  ) {
+    uint16_t stored[MAX_MEDICATIONS];
+    memset(stored, 0, sizeof(stored));
+
+    if (
+      persist_read_data(
+        MEDICATION_ALARM_MINUTES_PERSIST_KEY,
+        stored,
+        sizeof(stored)
+      ) == (int)sizeof(stored)
+    ) {
+      bool valid = true;
+
+      for (
+        uint8_t index = 0;
+        index < s_medication_count;
+        index++
+      ) {
+        if (
+          !medication_alarm_minute_valid(
+            stored[index]
+          )
+        ) {
+          valid = false;
+          break;
+        }
+      }
+
+      if (valid) {
+        memcpy(
+          s_medication_alarm_minutes,
+          stored,
+          sizeof(s_medication_alarm_minutes)
+        );
+        return;
+      }
+    }
+  }
+
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    s_medication_alarm_minutes[index] =
+        fallback_medication_alarm_minute_at(
+          index
+        );
+  }
+
+  (void)persist_medication_alarm_minutes();
+}
+
+static bool apply_medication_alarm_minutes(
+    bool save
+) {
+  for (
+    uint8_t index = 0;
+    index < s_pending_count;
+    index++
+  ) {
+    if (
+      !medication_alarm_minute_valid(
+        s_pending_medication_alarm_minutes[
+          index
+        ]
+      )
+    ) {
+      return false;
+    }
+  }
+
+  memcpy(
+    s_medication_alarm_minutes,
+    s_pending_medication_alarm_minutes,
+    sizeof(s_medication_alarm_minutes)
+  );
+
+  return
+      !save ||
+      persist_medication_alarm_minutes();
 }
 
 static MedicationSettings medication_from_legacy_v1(
@@ -1711,6 +1963,37 @@ static bool read_medication_from_message(
   return true;
 }
 
+
+static bool read_medication_alarm_minute_from_message(
+    DictionaryIterator *iterator,
+    uint16_t *minute
+) {
+  if (!iterator || !minute) {
+    return false;
+  }
+
+  Tuple *minute_tuple = dict_find(
+    iterator,
+    MESSAGE_KEY_MED_ALARM_MINUTE
+  );
+
+  int32_t value;
+
+  if (
+    !tuple_read_int32(
+      minute_tuple,
+      &value
+    ) ||
+    value < 0 ||
+    value >= DAYPART_MINUTES_PER_DAY
+  ) {
+    return false;
+  }
+
+  *minute = (uint16_t)value;
+  return true;
+}
+
 static uint16_t expected_pending_mask(
     uint8_t count
 ) {
@@ -1736,6 +2019,9 @@ static void reset_pending_medications(
   );
   reset_medication_intervals(
     s_pending_medication_intervals
+  );
+  reset_medication_alarm_minutes(
+    s_pending_medication_alarm_minutes
   );
 
   s_pending_count = count;
@@ -2119,6 +2405,7 @@ static void settings_inbox_received(
 
     MedicationSettings medication;
     MedicationIntervalSettings interval_settings;
+    uint16_t alarm_minute;
     MedicationAppearance appearance;
 
     if (
@@ -2129,6 +2416,10 @@ static void settings_inbox_received(
       !read_medication_interval_from_message(
         iterator,
         &interval_settings
+      ) ||
+      !read_medication_alarm_minute_from_message(
+        iterator,
+        &alarm_minute
       ) ||
       !read_medication_appearance_from_message(
         iterator,
@@ -2146,6 +2437,8 @@ static void settings_inbox_received(
     s_pending_medications[index] = medication;
     s_pending_medication_intervals[index] =
         interval_settings;
+    s_pending_medication_alarm_minutes[index] =
+        alarm_minute;
     s_pending_medication_appearances[index] = appearance;
 
     s_pending_received_mask |=
@@ -2299,6 +2592,8 @@ static void settings_inbox_received(
       );
   const bool intervals_saved =
       apply_medication_intervals(true);
+  const bool alarm_minutes_saved =
+      apply_medication_alarm_minutes(true);
   const bool appearances_saved =
       apply_medication_appearances();
 
@@ -2308,6 +2603,7 @@ static void settings_inbox_received(
       persist_scalar_settings() &&
       medication_list_saved &&
       intervals_saved &&
+      alarm_minutes_saved &&
       appearances_saved;
   s_settings_reset_verified =
       s_settings_storage_verified &&
@@ -2393,6 +2689,7 @@ void watch_settings_init(void) {
    */
   load_medication_intervals();
   load_medication_settings();
+  load_medication_alarm_minutes();
   load_medication_appearances();
   reset_pending_medications(0);
   reset_pending_medication_appearances(0);
