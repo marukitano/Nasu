@@ -28,6 +28,11 @@ typedef struct {
   uint8_t reserved[3];
 } MedicationAlarmState;
 
+typedef struct {
+  time_t timestamp;
+  uint16_t medication_mask;
+} AlarmEvent;
+
 static MedicationAlarmState
     s_medication_alarm_states[MAX_MEDICATIONS];
 static bool s_medication_alarm_states_loaded;
@@ -86,27 +91,18 @@ static bool medication_alarm_state_at(
 static uint16_t alarm_event_medication_mask_at(
     time_t timestamp
 );
-static void alarm_candidate_merge(
-    time_t candidate,
-    uint16_t candidate_mask,
-    time_t *best,
-    uint16_t *best_mask
+static void alarm_event_merge(
+    AlarmEvent candidate,
+    AlarmEvent *best
 );
-static time_t next_regular_occurrence_timestamp_after(
-    time_t now,
-    uint16_t *medication_mask
+static AlarmEvent next_scheduled_occurrence_after(
+    time_t now
 );
-static time_t next_interval_occurrence_timestamp_after(
-    time_t now,
-    uint16_t *medication_mask
+static AlarmEvent next_open_reminder_after(
+    time_t now
 );
-static time_t next_open_reminder_timestamp_after(
-    time_t now,
-    uint16_t *medication_mask
-);
-static time_t next_alarm_timestamp_after(
-    time_t now,
-    uint16_t *medication_mask
+static AlarmEvent next_alarm_event_after(
+    time_t now
 );
 static int32_t alarm_event_cookie_encode(
     uint16_t medication_mask
@@ -1135,55 +1131,49 @@ bool alarm_intake_navigation_lock_required(void) {
       s_alarm_due_medication_mask != 0;
 }
 
-static void alarm_candidate_merge(
-    time_t candidate,
-    uint16_t candidate_mask,
-    time_t *best,
-    uint16_t *best_mask
+static void alarm_event_merge(
+    AlarmEvent candidate,
+    AlarmEvent *best
 ) {
   if (
     !best ||
-    !best_mask ||
-    candidate <= 0 ||
-    candidate_mask == 0
+    candidate.timestamp <= 0 ||
+    candidate.medication_mask == 0
   ) {
     return;
   }
 
   if (
-    *best == 0 ||
-    candidate < *best
+    best->timestamp == 0 ||
+    candidate.timestamp < best->timestamp
   ) {
     *best = candidate;
-    *best_mask = candidate_mask;
-  } else if (candidate == *best) {
-    *best_mask |= candidate_mask;
+  } else if (
+    candidate.timestamp == best->timestamp
+  ) {
+    best->medication_mask |=
+        candidate.medication_mask;
   }
 }
 
-static time_t next_regular_occurrence_timestamp_after(
-    time_t now,
-    uint16_t *medication_mask
+static AlarmEvent next_scheduled_occurrence_after(
+    time_t now
 ) {
+  AlarmEvent best = { 0 };
   struct tm *today_ptr = localtime(&now);
+  const bool today_available = today_ptr != NULL;
+  struct tm today = { 0 };
 
-  if (!today_ptr) {
-    if (medication_mask) {
-      *medication_mask = 0;
-    }
-    return 0;
+  if (today_available) {
+    today = *today_ptr;
   }
 
-  const struct tm today = *today_ptr;
   const uint16_t starts[] = {
     s_dayparts.morning,
     s_dayparts.noon,
     s_dayparts.evening,
     s_dayparts.night
   };
-
-  time_t best = 0;
-  uint16_t best_mask = 0;
 
   for (
     uint8_t index = 0;
@@ -1193,11 +1183,46 @@ static time_t next_regular_occurrence_timestamp_after(
     const MedicationSettings *medication =
         &s_medications[index];
 
+    if (!medication->enabled) {
+      continue;
+    }
+
+    const uint16_t bit =
+        (uint16_t)(1u << index);
+
     if (
-      !medication->enabled ||
       medication->time ==
           MEDICATION_TIME_INTERVAL
     ) {
+      time_t occurrence_start = 0;
+      time_t occurrence_end = 0;
+
+      /*
+       * The fixed next occurrence belongs to the schedule itself.
+       * It must never depend on confirmation/reminder state.
+       */
+      if (
+        medication_interval_window_at(
+          index,
+          now,
+          &occurrence_start,
+          &occurrence_end
+        ) &&
+        occurrence_end > now
+      ) {
+        alarm_event_merge(
+          (AlarmEvent) {
+            .timestamp = occurrence_end,
+            .medication_mask = bit
+          },
+          &best
+        );
+      }
+
+      continue;
+    }
+
+    if (!today_available) {
       continue;
     }
 
@@ -1256,22 +1281,16 @@ static time_t next_regular_occurrence_timestamp_after(
         continue;
       }
 
-      const uint16_t bit =
-          (uint16_t)(1u << index);
-
-      alarm_candidate_merge(
-        alarm_time,
-        bit,
-        &best,
-        &best_mask
+      alarm_event_merge(
+        (AlarmEvent) {
+          .timestamp = alarm_time,
+          .medication_mask = bit
+        },
+        &best
       );
 
       break;
     }
-  }
-
-  if (medication_mask) {
-    *medication_mask = best_mask;
   }
 
   return best;
@@ -1314,70 +1333,10 @@ static time_t next_reminder_timestamp_for_state(
           : 0;
 }
 
-static time_t next_interval_occurrence_timestamp_after(
-    time_t now,
-    uint16_t *medication_mask
+static AlarmEvent next_open_reminder_after(
+    time_t now
 ) {
-  time_t best = 0;
-  uint16_t best_mask = 0;
-
-  for (
-    uint8_t index = 0;
-    index < s_medication_count;
-    index++
-  ) {
-    if (
-      !s_medications[index].enabled ||
-      s_medications[index].time !=
-          MEDICATION_TIME_INTERVAL
-    ) {
-      continue;
-    }
-
-    time_t occurrence_start = 0;
-    time_t occurrence_end = 0;
-
-    /*
-     * The fixed next occurrence belongs to the schedule itself.
-     * It must never depend on confirmation/reminder state.
-     */
-    if (
-      !medication_interval_window_at(
-        index,
-        now,
-        &occurrence_start,
-        &occurrence_end
-      )
-    ) {
-      continue;
-    }
-
-    const uint16_t bit =
-        (uint16_t)(1u << index);
-
-    if (occurrence_end > now) {
-      alarm_candidate_merge(
-        occurrence_end,
-        bit,
-        &best,
-        &best_mask
-      );
-    }
-  }
-
-  if (medication_mask) {
-    *medication_mask = best_mask;
-  }
-
-  return best;
-}
-
-static time_t next_open_reminder_timestamp_after(
-    time_t now,
-    uint16_t *medication_mask
-) {
-  time_t best = 0;
-  uint16_t best_mask = 0;
+  AlarmEvent best = { 0 };
 
   for (
     uint8_t index = 0;
@@ -1413,109 +1372,61 @@ static time_t next_open_reminder_timestamp_after(
       continue;
     }
 
-    const uint16_t bit =
-        (uint16_t)(1u << index);
-
-    alarm_candidate_merge(
-      candidate,
-      bit,
-      &best,
-      &best_mask
+    alarm_event_merge(
+      (AlarmEvent) {
+        .timestamp = candidate,
+        .medication_mask =
+            (uint16_t)(1u << index)
+      },
+      &best
     );
-  }
-
-  if (medication_mask) {
-    *medication_mask = best_mask;
   }
 
   return best;
 }
 
-static time_t next_alarm_timestamp_after(
-    time_t now,
-    uint16_t *medication_mask
+static AlarmEvent next_alarm_event_after(
+    time_t now
 ) {
-  time_t best = 0;
-  uint16_t best_mask = 0;
+  AlarmEvent best =
+      next_scheduled_occurrence_after(now);
 
-  uint16_t regular_mask = 0;
-  const time_t regular_candidate =
-      next_regular_occurrence_timestamp_after(
-        now,
-        &regular_mask
-      );
-
-  alarm_candidate_merge(
-    regular_candidate,
-    regular_mask,
-    &best,
-    &best_mask
+  alarm_event_merge(
+    next_open_reminder_after(now),
+    &best
   );
-
-  uint16_t interval_mask = 0;
-  const time_t interval_candidate =
-      next_interval_occurrence_timestamp_after(
-        now,
-        &interval_mask
-      );
-
-  alarm_candidate_merge(
-    interval_candidate,
-    interval_mask,
-    &best,
-    &best_mask
-  );
-
-  uint16_t reminder_mask = 0;
-  const time_t reminder_candidate =
-      next_open_reminder_timestamp_after(
-        now,
-        &reminder_mask
-      );
-
-  alarm_candidate_merge(
-    reminder_candidate,
-    reminder_mask,
-    &best,
-    &best_mask
-  );
-
-  if (medication_mask) {
-    *medication_mask = best_mask;
-  }
 
   return best;
 }
 
 time_t alarm_next_timestamp(void) {
-  return next_alarm_timestamp_after(time(NULL), NULL);
+  return
+      next_alarm_event_after(
+        time(NULL)
+      ).timestamp;
 }
 
 void schedule_next_alarm_wakeup(void) {
   wakeup_cancel_all();
 
   const time_t now = time(NULL);
-  uint16_t medication_mask = 0;
-  const time_t candidate =
-      next_alarm_timestamp_after(
-        now,
-        &medication_mask
-      );
+  const AlarmEvent event =
+      next_alarm_event_after(now);
 
   if (
-    candidate <= now ||
-    medication_mask == 0
+    event.timestamp <= now ||
+    event.medication_mask == 0
   ) {
     return;
   }
 
   const int32_t cookie =
       alarm_event_cookie_encode(
-        medication_mask
+        event.medication_mask
       );
 
   WakeupId result = E_INTERNAL;
-  time_t scheduled = candidate;
+  time_t scheduled = event.timestamp;
 
   for (
     uint8_t attempt = 0;
@@ -1538,7 +1449,7 @@ void schedule_next_alarm_wakeup(void) {
       APP_LOG_LEVEL_WARNING,
       "Medication wakeup failed: %ld mask=0x%04x",
       (long)result,
-      (unsigned int)medication_mask
+      (unsigned int)event.medication_mask
     );
   } else {
     APP_LOG(
@@ -1546,7 +1457,7 @@ void schedule_next_alarm_wakeup(void) {
       "Medication wakeup in %ld sec at=%ld mask=0x%04x",
       (long)(scheduled - now),
       (long)scheduled,
-      (unsigned int)medication_mask
+      (unsigned int)event.medication_mask
     );
   }
 }
