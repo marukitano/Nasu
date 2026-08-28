@@ -38,3 +38,10 @@ uint32_t current_time_ms(void) {
       (uint32_t)seconds * 1000u +
       milliseconds;
 }
+
+void app_exit_to_watchface(void) {
+  exit_reason_set(
+    APP_EXIT_ACTION_PERFORMED_SUCCESSFULLY
+  );
+  window_stack_pop_all(false);
+}

@@ -2448,11 +2448,14 @@ static void settings_inbox_received(
 
     APP_LOG(
       APP_LOG_LEVEL_INFO,
-      "Medication item %ld complete: shape=%u size=%u imprint=%s",
+      "Medication item %ld: symbol=%u slot=%u alarm_min=%u interval=%uh@%02u:%02u",
       (long)index,
-      (unsigned int)appearance.shape,
-      (unsigned int)appearance.size,
-      appearance.imprint
+      (unsigned int)medication.symbol,
+      (unsigned int)medication.time,
+      (unsigned int)alarm_minute,
+      (unsigned int)interval_settings.hours,
+      (unsigned int)interval_settings.start_hour,
+      (unsigned int)interval_settings.start_minute
     );
     return;
   }

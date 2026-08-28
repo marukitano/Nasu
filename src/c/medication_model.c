@@ -426,15 +426,20 @@ static bool medication_matches_group(
       &s_medications[medication_index];
   const uint16_t active_mask =
       alarm_active_medication_mask();
+  const uint16_t medication_bit =
+      (uint16_t)(1u << medication_index);
 
-  if (
-    active_mask != 0 &&
-    (
-      active_mask &
-      (uint16_t)(1u << medication_index)
-    ) == 0
-  ) {
-    return false;
+  if (active_mask != 0) {
+    /*
+     * The active alarm event was already validated by alarm_start().
+     * Its medication mask is authoritative for the intake snapshot.
+     * Do not re-evaluate occurrence state here and accidentally drop
+     * an interval medication from the visible intake rows.
+     */
+    return
+        (active_mask & medication_bit) != 0 &&
+        medication->symbol ==
+            (uint8_t)symbol;
   }
 
   return

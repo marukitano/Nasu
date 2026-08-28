@@ -738,6 +738,13 @@ function sendMedicationAt(
       medication.time === 4
           ? effectiveAlarmMinute
           : medication.intervalStart;
+  console.log(
+    'Nasu alarm tx index=' + index +
+    ' symbol=' + medication.symbol +
+    ' slot=' + medication.time +
+    ' effective=' + effectiveAlarmMinute +
+    ' intervalStart=' + effectiveIntervalStart
+  );
   var iconSet = medication.iconSet === true;
   var shape = iconSet && integerInRange(medication.shape, 0, 4)
       ? medication.shape
@@ -1288,7 +1295,23 @@ function configurationPage(
     'active.parentNode.className=iconSet?"check":"check disabled";',
     'card.querySelector(".icon-warning").className=iconSet?"note icon-warning hidden":"note icon-warning";',
     '}',
+    'function updateMedicationSummary(card){',
+    'var time=numberValue(card,"time");',
+    'var intervalHours=numberValue(card,"intervalHours");',
+    'var dosage=card.querySelector("[data-field=\\"dosage\\"]").value.trim().slice(0,20);',
+    'var effect=card.querySelector("[data-field=\\"effect\\"]").value.trim().slice(0,31);',
+    'var quantity=numberValue(card,"quantity");',
+    'var enabled=card.querySelector("[data-field=\\"enabled\\"]").checked;',
+    'var timeSummary=time===4?timeNames[4]+" · "+intervalHours+" h":timeNames[time];',
+    'var sub=timeSummary+(dosage?" · "+dosage:"")+(effect?" · "+effect:"")+(quantity>1?" · x"+quantity:"")+(enabled?"":" · "+tr("aus","off"));',
+    'var summarySub=card.querySelector(".summary-sub");',
+    'if(summarySub){summarySub.textContent=sub;}',
+    'var summaryName=card.querySelector(".summary-name");',
+    'var currentName=card.querySelector("[data-field=\\"name\\"]").value.trim();',
+    'if(summaryName){summaryName.textContent=currentName||tr("Neues Medikament","New medication");}',
+    '}',
     'function setCardOpen(card,open){',
+    'updateMedicationSummary(card);',
     'var body=card.querySelector(".body");',
     'var toggle=card.querySelector(".toggle");',
     'body.className=open?"body":"body hidden";',
@@ -1472,7 +1495,7 @@ function configurationPage(
     'var card=cards[c];',
     'updateDayFields(card);',
     'updateIconFields(card);',
-    'card.querySelector("[data-field=time]").onchange=(function(item){return function(){updateDayFields(item);};})(card);',
+    'card.querySelector("[data-field=time]").onchange=(function(item){return function(){updateDayFields(item);updateMedicationSummary(item);};})(card);',
     'card.querySelector("[data-field=\\"schedule\\"]").onchange=(function(item){return function(){updateDayFields(item);};})(card);',
     'card.querySelector("[data-field=\\"symbol\\"]").onchange=(function(item){return function(){updateIconFields(item);};})(card);',
     'card.querySelector("[data-field=\\"shape\\"]").onchange=(function(item){return function(){updateIconFields(item);};})(card);',

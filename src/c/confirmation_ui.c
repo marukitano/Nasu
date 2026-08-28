@@ -1758,7 +1758,7 @@ static void exit_app(void) {
   s_transfer_animation_state =
       TRANSFER_ANIMATION_IDLE;
   alarm_stop();
-  window_stack_pop_all(true);
+  app_exit_to_watchface();
 }
 
 static void transfer_animation_timer_handler(
