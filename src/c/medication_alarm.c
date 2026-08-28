@@ -70,19 +70,11 @@ static MedicationAlarmState *medication_alarm_state_for_occurrence(
     uint8_t medication_index,
     time_t occurrence_start
 );
-static bool interval_alarm_state_at(
-    uint8_t medication_index,
-    time_t timestamp,
-    time_t *window_start,
-    time_t *window_end,
-    MedicationAlarmState **state
-);
-static bool regular_alarm_state_at(
+static bool medication_occurrence_at(
     uint8_t medication_index,
     time_t timestamp,
     time_t *occurrence_start,
-    time_t *occurrence_end,
-    MedicationAlarmState **state
+    time_t *occurrence_end
 );
 static bool medication_alarm_state_at(
     uint8_t medication_index,
@@ -801,51 +793,6 @@ static MedicationAlarmState *medication_alarm_state_for_occurrence(
   return current;
 }
 
-static bool interval_alarm_state_at(
-    uint8_t medication_index,
-    time_t timestamp,
-    time_t *window_start,
-    time_t *window_end,
-    MedicationAlarmState **state
-) {
-  time_t occurrence_start = 0;
-  time_t occurrence_end = 0;
-
-  if (
-    !medication_interval_window_at(
-      medication_index,
-      timestamp,
-      &occurrence_start,
-      &occurrence_end
-    )
-  ) {
-    return false;
-  }
-
-  MedicationAlarmState *current =
-      medication_alarm_state_for_occurrence(
-        medication_index,
-        occurrence_start
-      );
-
-  if (!current) {
-    return false;
-  }
-
-  if (window_start) {
-    *window_start = occurrence_start;
-  }
-  if (window_end) {
-    *window_end = occurrence_end;
-  }
-  if (state) {
-    *state = current;
-  }
-
-  return true;
-}
-
-
 static bool regular_alarm_timestamp_for_window(
     uint8_t medication_index,
     time_t window_start,
@@ -931,55 +878,65 @@ static bool regular_alarm_timestamp_for_window(
   return true;
 }
 
-static bool regular_alarm_state_at(
+static bool medication_occurrence_at(
     uint8_t medication_index,
     time_t timestamp,
     time_t *occurrence_start,
-    time_t *occurrence_end,
-    MedicationAlarmState **state
+    time_t *occurrence_end
 ) {
-  time_t window_start = 0;
-  time_t window_end = 0;
-  MedicationTime slot;
-  time_t alarm_time = 0;
-
-  if (
-    !alarm_window_bounds_at(
-      timestamp,
-      &window_start,
-      &window_end,
-      &slot
-    ) ||
-    !regular_alarm_timestamp_for_window(
-      medication_index,
-      window_start,
-      slot,
-      &alarm_time
-    ) ||
-    timestamp < alarm_time ||
-    alarm_time >= window_end
-  ) {
+  if (medication_index >= s_medication_count) {
     return false;
   }
 
-  MedicationAlarmState *current =
-      medication_alarm_state_for_occurrence(
-        medication_index,
-        alarm_time
-      );
+  time_t resolved_start = 0;
+  time_t resolved_end = 0;
 
-  if (!current) {
-    return false;
+  if (
+    s_medications[medication_index].time ==
+        MEDICATION_TIME_INTERVAL
+  ) {
+    if (
+      !medication_interval_window_at(
+        medication_index,
+        timestamp,
+        &resolved_start,
+        &resolved_end
+      )
+    ) {
+      return false;
+    }
+  } else {
+    time_t window_start = 0;
+    MedicationTime slot;
+    time_t alarm_time = 0;
+
+    if (
+      !alarm_window_bounds_at(
+        timestamp,
+        &window_start,
+        &resolved_end,
+        &slot
+      ) ||
+      !regular_alarm_timestamp_for_window(
+        medication_index,
+        window_start,
+        slot,
+        &alarm_time
+      ) ||
+      timestamp < alarm_time ||
+      alarm_time >= resolved_end
+    ) {
+      return false;
+    }
+
+    resolved_start = alarm_time;
   }
 
   if (occurrence_start) {
-    *occurrence_start = alarm_time;
+    *occurrence_start = resolved_start;
   }
   if (occurrence_end) {
-    *occurrence_end = window_end;
-  }
-  if (state) {
-    *state = current;
+    *occurrence_end = resolved_end;
   }
 
   return true;
@@ -992,30 +949,41 @@ static bool medication_alarm_state_at(
     time_t *occurrence_end,
     MedicationAlarmState **state
 ) {
-  if (medication_index >= s_medication_count) {
+  time_t resolved_start = 0;
+  time_t resolved_end = 0;
+
+  if (
+    !medication_occurrence_at(
+      medication_index,
+      timestamp,
+      &resolved_start,
+      &resolved_end
+    )
+  ) {
     return false;
   }
 
-  if (
-    s_medications[medication_index].time ==
-        MEDICATION_TIME_INTERVAL
-  ) {
-    return interval_alarm_state_at(
-      medication_index,
-      timestamp,
-      occurrence_start,
-      occurrence_end,
-      state
-    );
+  MedicationAlarmState *current =
+      medication_alarm_state_for_occurrence(
+        medication_index,
+        resolved_start
+      );
+
+  if (!current) {
+    return false;
   }
 
-  return regular_alarm_state_at(
-    medication_index,
-    timestamp,
-    occurrence_start,
-    occurrence_end,
-    state
-  );
+  if (occurrence_start) {
+    *occurrence_start = resolved_start;
+  }
+  if (occurrence_end) {
+    *occurrence_end = resolved_end;
+  }
+  if (state) {
+    *state = current;
+  }
+
+  return true;
 }
 
 static uint16_t alarm_unconfirmed_medication_mask_at(
@@ -1880,16 +1848,12 @@ bool alarm_reset_after_settings_save(void) {
   const time_t current_minute =
       now - (now % 60);
 
-  time_t window_start = 0;
-  time_t window_end = 0;
-  MedicationTime window_slot;
-
   if (
     !alarm_window_bounds_at(
       now,
-      &window_start,
-      &window_end,
-      &window_slot
+      NULL,
+      NULL,
+      NULL
     )
   ) {
     APP_LOG(
@@ -1929,51 +1893,21 @@ bool alarm_reset_after_settings_save(void) {
         continue;
       }
 
-      if (
-        s_medications[index].time ==
-            MEDICATION_TIME_INTERVAL
-      ) {
-        time_t occurrence_start = 0;
-        time_t occurrence_end = 0;
-
-        if (
-          medication_interval_window_at(
-            index,
-            now,
-            &occurrence_start,
-            &occurrence_end
-          ) &&
-          occurrence_start < current_minute
-        ) {
-          s_medication_alarm_states[index] =
-              (MedicationAlarmState) {
-                .occurrence_start =
-                    (int32_t)occurrence_start,
-                .last_reminder = 0,
-                .confirmed = 1,
-                .reserved = { 0, 0, 0 }
-              };
-        }
-
-        continue;
-      }
-
-      time_t alarm_time = 0;
+      time_t occurrence_start = 0;
 
       if (
-        regular_alarm_timestamp_for_window(
+        medication_occurrence_at(
           index,
-          window_start,
-          window_slot,
-          &alarm_time
+          now,
+          &occurrence_start,
+          NULL
         ) &&
-        alarm_time < current_minute &&
-        alarm_time < window_end
+        occurrence_start < current_minute
       ) {
         s_medication_alarm_states[index] =
             (MedicationAlarmState) {
               .occurrence_start =
-                  (int32_t)alarm_time,
+                  (int32_t)occurrence_start,
               .last_reminder = 0,
               .confirmed = 1,
               .reserved = { 0, 0, 0 }
