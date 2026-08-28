@@ -1756,46 +1756,31 @@ static void record_alarm_reminder_at(
       continue;
     }
 
-    if (
-      s_medications[index].time ==
-          MEDICATION_TIME_INTERVAL
-    ) {
-      IntervalMedicationAlarmState *state = NULL;
-
-      if (
-        interval_alarm_state_at(
-          index,
-          timestamp,
-          NULL,
-          NULL,
-          &state
-        ) &&
-        state &&
-        !state->confirmed
-      ) {
-        state->last_reminder =
-            minute_timestamp;
-        interval_changed = true;
-      }
-
-      continue;
-    }
-
-    RegularMedicationAlarmState *state = NULL;
+    MedicationAlarmState *state = NULL;
 
     if (
-      regular_alarm_state_at(
+      !medication_alarm_state_at(
         index,
         timestamp,
         NULL,
         NULL,
         &state
-      ) &&
-      state &&
-      !state->confirmed
+      ) ||
+      !state ||
+      state->confirmed
     ) {
-      state->last_reminder =
-          minute_timestamp;
+      continue;
+    }
+
+    state->last_reminder =
+        minute_timestamp;
+
+    if (
+      s_medications[index].time ==
+          MEDICATION_TIME_INTERVAL
+    ) {
+      interval_changed = true;
+    } else {
       regular_changed = true;
     }
   }
