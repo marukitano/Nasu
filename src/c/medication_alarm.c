@@ -903,6 +903,52 @@ static MedicationAlarmState *medication_alarm_state_for_occurrence(
   return current;
 }
 
+static uint16_t regular_alarm_minute_at(
+    uint8_t medication_index
+) {
+  if (medication_index >= s_medication_count) {
+    return 0;
+  }
+
+  const MedicationSettings *medication =
+      &s_medications[medication_index];
+
+  if (
+    medication->time >=
+        MEDICATION_TIME_INTERVAL
+  ) {
+    return 0;
+  }
+
+  const uint16_t starts[] = {
+    s_dayparts.morning,
+    s_dayparts.noon,
+    s_dayparts.evening,
+    s_dayparts.night
+  };
+
+  uint16_t minute =
+      starts[medication->time];
+
+  /*
+   * Regular Pen alarms keep the existing two-minute offset.
+   * Interval medication gets its fixed clock phase from its interval
+   * settings and never passes through this helper.
+   */
+  if (
+    medication->symbol ==
+        MEDICATION_SYMBOL_PEN
+  ) {
+    minute =
+        (uint16_t)(
+          (minute + 2) %
+          DAYPART_MINUTES_PER_DAY
+        );
+  }
+
+  return minute;
+}
+
 static bool regular_alarm_timestamp_for_window(
     uint8_t medication_index,
     time_t window_start,
@@ -945,7 +991,7 @@ static bool regular_alarm_timestamp_for_window(
   }
 
   const uint16_t minute =
-      medication_alarm_minute_at(
+      regular_alarm_minute_at(
         medication_index
       );
 

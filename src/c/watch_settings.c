@@ -685,64 +685,6 @@ static bool medication_settings_valid(
 }
 
 
-uint16_t medication_alarm_minute_at(
-    uint8_t medication_index
-) {
-  if (medication_index >= s_medication_count) {
-    return 0;
-  }
-
-  const MedicationSettings *medication =
-      &s_medications[medication_index];
-
-  if (
-    medication->time ==
-        MEDICATION_TIME_INTERVAL
-  ) {
-    const MedicationIntervalSettings *interval =
-        medication_interval_settings_at(
-          medication_index
-        );
-
-    if (!interval) {
-      return 0;
-    }
-
-    return
-        (uint16_t)(
-          interval->start_hour * 60 +
-          interval->start_minute
-        );
-  }
-
-  const uint16_t starts[] = {
-    s_dayparts.morning,
-    s_dayparts.noon,
-    s_dayparts.evening,
-    s_dayparts.night
-  };
-
-  uint16_t minute =
-      starts[medication->time];
-
-  /*
-   * Regular Pen alarms keep the existing two-minute offset.
-   * Interval medication keeps its configured fixed clock phase.
-   */
-  if (
-    medication->symbol ==
-        MEDICATION_SYMBOL_PEN
-  ) {
-    minute =
-        (uint16_t)(
-          (minute + 2) %
-          DAYPART_MINUTES_PER_DAY
-        );
-  }
-
-  return minute;
-}
-
 static MedicationSettings medication_from_legacy_v1(
     const LegacyMedicationSettingsV1 *legacy
 ) {
