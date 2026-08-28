@@ -13,7 +13,6 @@ void alarm_confirmation_received(
 void alarm_handle_minute_tick(
     const struct tm *tick_time
 );
-void alarm_refresh_window_state(void);
 bool alarm_reminder_interval_valid(int value);
 bool alarm_reset_after_settings_save(void);
 void alarm_start(void);

@@ -21,8 +21,6 @@
 static AppTimer *s_alarm_intro_timer;
 static bool s_alarm_visuals_are_paused;
 
-static bool s_alarm_window_state_loaded;
-
 typedef struct {
   int32_t occurrence_start;
   int32_t last_reminder;
@@ -72,7 +70,6 @@ static bool alarm_window_bounds_at(
     time_t *window_end,
     MedicationTime *window_slot
 );
-static void persist_alarm_window_state(void);
 static void interval_alarm_states_load(void);
 static bool persist_interval_alarm_states(void);
 static bool reset_interval_alarm_states(void);
@@ -1086,66 +1083,6 @@ static uint16_t alarm_event_medication_mask_at(
   return mask;
 }
 
-static void persist_alarm_window_state(void) {
-  persist_write_data(
-    ALARM_WINDOW_STATE_PERSIST_KEY,
-    &s_alarm_window_state,
-    sizeof(s_alarm_window_state)
-  );
-}
-
-void alarm_refresh_window_state(void) {
-  time_t window_start;
-
-  if (
-    !alarm_window_bounds_at(
-      time(NULL),
-      &window_start,
-      NULL,
-      NULL
-    )
-  ) {
-    return;
-  }
-
-  if (!s_alarm_window_state_loaded) {
-    memset(
-      &s_alarm_window_state,
-      0,
-      sizeof(s_alarm_window_state)
-    );
-
-    if (
-      persist_exists(ALARM_WINDOW_STATE_PERSIST_KEY) &&
-      persist_get_size(ALARM_WINDOW_STATE_PERSIST_KEY) ==
-          (int)sizeof(AlarmWindowState)
-    ) {
-      (void)persist_read_data(
-        ALARM_WINDOW_STATE_PERSIST_KEY,
-        &s_alarm_window_state,
-        sizeof(s_alarm_window_state)
-      );
-    }
-
-    s_alarm_window_state_loaded = true;
-  }
-
-  if (
-    s_alarm_window_state.window_start !=
-        (int32_t)window_start
-  ) {
-    s_alarm_window_state = (AlarmWindowState) {
-      .window_start = (int32_t)window_start,
-      .last_reminder = 0,
-      .confirmed_mask = 0
-    };
-
-    persist_alarm_window_state();
-  }
-}
-
-
-
 static uint8_t alarm_unconfirmed_regular_symbol_mask_at(
     time_t timestamp
 ) {
@@ -1973,27 +1910,6 @@ bool alarm_reset_after_settings_save(void) {
     return false;
   }
 
-  s_alarm_window_state = (AlarmWindowState) {
-    .window_start = (int32_t)window_start,
-    .last_reminder = 0,
-    .confirmed_mask = 0
-  };
-  s_alarm_window_state_loaded = true;
-
-  const int bytes_written = persist_write_data(
-    ALARM_WINDOW_STATE_PERSIST_KEY,
-    &s_alarm_window_state,
-    sizeof(s_alarm_window_state)
-  );
-
-  AlarmWindowState verified = { 0 };
-  const int bytes_read =
-      persist_read_data(
-        ALARM_WINDOW_STATE_PERSIST_KEY,
-        &verified,
-        sizeof(verified)
-      );
-
   const bool regular_reset_verified =
       reset_regular_alarm_states();
   const bool interval_reset_verified =
@@ -2089,13 +2005,6 @@ bool alarm_reset_after_settings_save(void) {
   }
 
   const bool reset_verified =
-      bytes_written ==
-          (int)sizeof(s_alarm_window_state) &&
-      bytes_read == (int)sizeof(verified) &&
-      verified.window_start ==
-          s_alarm_window_state.window_start &&
-      verified.last_reminder == 0 &&
-      verified.confirmed_mask == 0 &&
       regular_reset_verified &&
       interval_reset_verified &&
       regular_seed_verified &&

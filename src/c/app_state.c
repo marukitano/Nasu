@@ -39,7 +39,6 @@ bool s_transfer_screen_active;
 uint8_t s_alarm_audio_volume = DEFAULT_ALARM_AUDIO_VOLUME;
 bool s_alarm_vibration_enabled = DEFAULT_ALARM_VIBRATION_ENABLED;
 uint8_t s_alarm_reminder_interval_minutes = DEFAULT_ALARM_REMINDER_INTERVAL_MINUTES;
-AlarmWindowState s_alarm_window_state;
 bool s_alarm_active;
 bool s_alarm_launch_pending;
 

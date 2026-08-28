@@ -118,7 +118,6 @@
 #define ALARM_AUDIO_VOLUME_PERSIST_KEY 205
 #define ALARM_VIBRATION_PERSIST_KEY 206
 #define ALARM_INTERVAL_PERSIST_KEY 207
-#define ALARM_WINDOW_STATE_PERSIST_KEY 208
 #define LANGUAGE_PERSIST_KEY 209
 #define SHOW_JAPANESE_PATTERN_PERSIST_KEY 212
 #define MEDICATION_INTERVAL_SETTINGS_PERSIST_KEY 213
@@ -278,13 +277,6 @@ typedef struct {
   uint16_t evening;
   uint16_t night;
 } DaypartSettings;
-
-typedef struct {
-  int32_t window_start;
-  int32_t last_reminder;
-  uint8_t confirmed_mask;
-  uint8_t reserved[3];
-} AlarmWindowState;
 
 typedef enum {
   CONFIRM_IDLE,

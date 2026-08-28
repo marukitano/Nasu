@@ -43,7 +43,6 @@ extern bool s_transfer_screen_active;
 extern uint8_t s_alarm_audio_volume;
 extern bool s_alarm_vibration_enabled;
 extern uint8_t s_alarm_reminder_interval_minutes;
-extern AlarmWindowState s_alarm_window_state;
 extern bool s_alarm_active;
 extern bool s_alarm_launch_pending;
 
