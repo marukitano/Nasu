@@ -94,10 +94,13 @@ static bool medication_alarm_state_at(
 static uint16_t alarm_event_medication_mask_at(
     time_t timestamp
 );
-static uint8_t alarm_unconfirmed_regular_symbol_mask_at(
-    time_t timestamp
+static void alarm_candidate_merge(
+    time_t candidate,
+    uint16_t candidate_mask,
+    time_t *best,
+    uint16_t *best_mask
 );
-static time_t next_due_window_start_after(
+static time_t next_regular_occurrence_timestamp_after(
     time_t now,
     uint16_t *medication_mask
 );
@@ -1101,36 +1104,6 @@ static uint16_t alarm_event_medication_mask_at(
   return mask;
 }
 
-static uint8_t alarm_unconfirmed_regular_symbol_mask_at(
-    time_t timestamp
-) {
-  uint8_t mask = 0;
-
-  for (
-    uint8_t index = 0;
-    index < s_medication_count;
-    index++
-  ) {
-    if (
-      s_medications[index].time ==
-          MEDICATION_TIME_INTERVAL ||
-      !alarm_medication_is_unconfirmed_due_at(
-        index,
-        timestamp
-      )
-    ) {
-      continue;
-    }
-
-    mask |=
-        (uint8_t)(
-          1u << s_medications[index].symbol
-        );
-  }
-
-  return mask;
-}
-
 bool alarm_medication_is_unconfirmed_due_at(
     uint8_t medication_index,
     time_t timestamp
@@ -1152,22 +1125,14 @@ bool alarm_medication_is_unconfirmed_due_at(
 uint8_t alarm_unconfirmed_symbol_mask_at(
     time_t timestamp
 ) {
-  uint8_t mask =
-      alarm_unconfirmed_regular_symbol_mask_at(
-        timestamp
-      );
+  uint8_t mask = 0;
 
   for (
     uint8_t index = 0;
     index < s_medication_count;
     index++
   ) {
-    const MedicationSettings *medication =
-        &s_medications[index];
-
     if (
-      medication->time !=
-          MEDICATION_TIME_INTERVAL ||
       !alarm_medication_is_unconfirmed_due_at(
         index,
         timestamp
@@ -1177,7 +1142,9 @@ uint8_t alarm_unconfirmed_symbol_mask_at(
     }
 
     mask |=
-        (uint8_t)(1u << medication->symbol);
+        (uint8_t)(
+          1u << s_medications[index].symbol
+        );
   }
 
   return mask;
@@ -1200,7 +1167,33 @@ bool alarm_intake_navigation_lock_required(void) {
       s_alarm_due_medication_mask != 0;
 }
 
-static time_t next_due_window_start_after(
+static void alarm_candidate_merge(
+    time_t candidate,
+    uint16_t candidate_mask,
+    time_t *best,
+    uint16_t *best_mask
+) {
+  if (
+    !best ||
+    !best_mask ||
+    candidate <= 0 ||
+    candidate_mask == 0
+  ) {
+    return;
+  }
+
+  if (
+    *best == 0 ||
+    candidate < *best
+  ) {
+    *best = candidate;
+    *best_mask = candidate_mask;
+  } else if (candidate == *best) {
+    *best_mask |= candidate_mask;
+  }
+}
+
+static time_t next_regular_occurrence_timestamp_after(
     time_t now,
     uint16_t *medication_mask
 ) {
@@ -1298,15 +1291,12 @@ static time_t next_due_window_start_after(
       const uint16_t bit =
           (uint16_t)(1u << index);
 
-      if (
-        best == 0 ||
-        alarm_time < best
-      ) {
-        best = alarm_time;
-        best_mask = bit;
-      } else if (alarm_time == best) {
-        best_mask |= bit;
-      }
+      alarm_candidate_merge(
+        alarm_time,
+        bit,
+        &best,
+        &best_mask
+      );
 
       break;
     }
@@ -1398,15 +1388,12 @@ static time_t next_interval_occurrence_timestamp_after(
         (uint16_t)(1u << index);
 
     if (occurrence_end > now) {
-      if (
-        best == 0 ||
-        occurrence_end < best
-      ) {
-        best = occurrence_end;
-        best_mask = bit;
-      } else if (occurrence_end == best) {
-        best_mask |= bit;
-      }
+      alarm_candidate_merge(
+        occurrence_end,
+        bit,
+        &best,
+        &best_mask
+      );
     }
   }
 
@@ -1461,15 +1448,12 @@ static time_t next_open_reminder_timestamp_after(
     const uint16_t bit =
         (uint16_t)(1u << index);
 
-    if (
-      best == 0 ||
-      candidate < best
-    ) {
-      best = candidate;
-      best_mask = bit;
-    } else if (candidate == best) {
-      best_mask |= bit;
-    }
+    alarm_candidate_merge(
+      candidate,
+      bit,
+      &best,
+      &best_mask
+    );
   }
 
   if (medication_mask) {
@@ -1483,12 +1467,22 @@ static time_t next_alarm_timestamp_after(
     time_t now,
     uint16_t *medication_mask
 ) {
+  time_t best = 0;
   uint16_t best_mask = 0;
-  time_t best =
-      next_due_window_start_after(
+
+  uint16_t regular_mask = 0;
+  const time_t regular_candidate =
+      next_regular_occurrence_timestamp_after(
         now,
-        &best_mask
+        &regular_mask
       );
+
+  alarm_candidate_merge(
+    regular_candidate,
+    regular_mask,
+    &best,
+    &best_mask
+  );
 
   uint16_t interval_mask = 0;
   const time_t interval_candidate =
@@ -1497,17 +1491,12 @@ static time_t next_alarm_timestamp_after(
         &interval_mask
       );
 
-  if (interval_candidate > now) {
-    if (
-      best == 0 ||
-      interval_candidate < best
-    ) {
-      best = interval_candidate;
-      best_mask = interval_mask;
-    } else if (interval_candidate == best) {
-      best_mask |= interval_mask;
-    }
-  }
+  alarm_candidate_merge(
+    interval_candidate,
+    interval_mask,
+    &best,
+    &best_mask
+  );
 
   uint16_t reminder_mask = 0;
   const time_t reminder_candidate =
@@ -1516,17 +1505,12 @@ static time_t next_alarm_timestamp_after(
         &reminder_mask
       );
 
-  if (reminder_candidate > now) {
-    if (
-      best == 0 ||
-      reminder_candidate < best
-    ) {
-      best = reminder_candidate;
-      best_mask = reminder_mask;
-    } else if (reminder_candidate == best) {
-      best_mask |= reminder_mask;
-    }
-  }
+  alarm_candidate_merge(
+    reminder_candidate,
+    reminder_mask,
+    &best,
+    &best_mask
+  );
 
   if (medication_mask) {
     *medication_mask = best_mask;
