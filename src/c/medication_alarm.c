@@ -1360,6 +1360,43 @@ static time_t next_due_window_start_after(
   return best;
 }
 
+static time_t next_reminder_timestamp_for_state(
+    time_t now,
+    time_t occurrence_start,
+    time_t occurrence_end,
+    const MedicationAlarmState *state
+) {
+  if (!state || state->confirmed) {
+    return 0;
+  }
+
+  time_t candidate;
+
+  if (
+    state->last_reminder <
+        (int32_t)occurrence_start
+  ) {
+    candidate =
+        ((now / 60) + 1) * 60;
+  } else {
+    candidate =
+        (time_t)state->last_reminder +
+        (time_t)s_alarm_reminder_interval_minutes *
+            60;
+
+    if (candidate <= now) {
+      candidate =
+          ((now / 60) + 1) * 60;
+    }
+  }
+
+  return
+      candidate > now &&
+      candidate < occurrence_end
+          ? candidate
+          : 0;
+}
+
 static time_t next_interval_alarm_timestamp_after(
     time_t now,
     uint16_t *medication_mask
@@ -1428,36 +1465,20 @@ static time_t next_interval_alarm_timestamp_after(
         NULL,
         &state
       ) ||
-      !state ||
-      state->confirmed
+      !state
     ) {
       continue;
     }
 
-    time_t reminder_candidate;
+    const time_t reminder_candidate =
+        next_reminder_timestamp_for_state(
+          now,
+          occurrence_start,
+          occurrence_end,
+          state
+        );
 
-    if (
-      state->last_reminder <
-          (int32_t)occurrence_start
-    ) {
-      reminder_candidate =
-          ((now / 60) + 1) * 60;
-    } else {
-      reminder_candidate =
-          (time_t)state->last_reminder +
-          (time_t)s_alarm_reminder_interval_minutes *
-              60;
-
-      if (reminder_candidate <= now) {
-        reminder_candidate =
-            ((now / 60) + 1) * 60;
-      }
-    }
-
-    if (
-      reminder_candidate > now &&
-      reminder_candidate < occurrence_end
-    ) {
+    if (reminder_candidate > 0) {
       if (
         best == 0 ||
         reminder_candidate < best
@@ -1512,36 +1533,20 @@ static time_t next_alarm_timestamp_after(
         &occurrence_end,
         &state
       ) ||
-      !state ||
-      state->confirmed
+      !state
     ) {
       continue;
     }
 
-    time_t candidate;
+    const time_t candidate =
+        next_reminder_timestamp_for_state(
+          now,
+          occurrence_start,
+          occurrence_end,
+          state
+        );
 
-    if (
-      state->last_reminder <
-          (int32_t)occurrence_start
-    ) {
-      candidate =
-          ((now / 60) + 1) * 60;
-    } else {
-      candidate =
-          (time_t)state->last_reminder +
-          (time_t)s_alarm_reminder_interval_minutes *
-              60;
-
-      if (candidate <= now) {
-        candidate =
-            ((now / 60) + 1) * 60;
-      }
-    }
-
-    if (
-      candidate > now &&
-      candidate < occurrence_end
-    ) {
+    if (candidate > 0) {
       const uint16_t bit =
           (uint16_t)(1u << index);
 
