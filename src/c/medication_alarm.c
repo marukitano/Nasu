@@ -39,7 +39,7 @@ static bool s_medication_alarm_states_loaded;
 
 static time_t s_alarm_stop_time;
 static uint16_t s_alarm_due_medication_mask;
-static uint16_t s_pending_wakeup_medication_mask;
+static uint16_t s_launch_wakeup_medication_mask;
 static AppTimer *s_alarm_pulse_timer;
 static AppTimer *s_alarm_audio_pump_timer;
 static ResHandle s_alarm_audio_resource;
@@ -111,7 +111,13 @@ static bool alarm_event_cookie_decode(
     int32_t cookie,
     uint16_t *medication_mask
 );
-static void record_alarm_reminder_at(time_t timestamp);
+static void record_alarm_reminder_at(
+    time_t timestamp,
+    uint16_t medication_mask
+);
+static void alarm_start_for_request(
+    uint16_t requested_mask
+);
 static void alarm_vibrate(void);
 static void alarm_pulse_timer_handler(void *context);
 static void alarm_wakeup_handler(
@@ -1551,7 +1557,8 @@ static void alarm_pulse_timer_handler(void *context) {
 }
 
 static void record_alarm_reminder_at(
-    time_t timestamp
+    time_t timestamp,
+    uint16_t medication_mask
 ) {
   const int32_t minute_timestamp =
       (int32_t)(
@@ -1567,7 +1574,7 @@ static void record_alarm_reminder_at(
   ) {
     if (
       (
-        s_alarm_due_medication_mask &
+        medication_mask &
         (uint16_t)(1u << index)
       ) == 0
     ) {
@@ -1600,7 +1607,9 @@ static void record_alarm_reminder_at(
   }
 }
 
-void alarm_start(void) {
+static void alarm_start_for_request(
+    uint16_t requested_mask
+) {
   if (s_alarm_active) {
     return;
   }
@@ -1611,10 +1620,6 @@ void alarm_start(void) {
   }
 
   const time_t now = time(NULL);
-  const uint16_t requested_mask =
-      s_pending_wakeup_medication_mask;
-  s_pending_wakeup_medication_mask = 0;
-
   uint16_t due_medication_mask = 0;
 
   if (requested_mask != 0) {
@@ -1660,7 +1665,10 @@ void alarm_start(void) {
     (unsigned int)due_medication_mask
   );
 
-  record_alarm_reminder_at(now);
+  record_alarm_reminder_at(
+    now,
+    due_medication_mask
+  );
 
   s_alarm_active = true;
   s_alarm_stop_time =
@@ -1682,6 +1690,24 @@ void alarm_start(void) {
   }
 }
 
+void alarm_start(void) {
+  if (
+    s_alarm_active ||
+    s_transfer_screen_active
+  ) {
+    if (s_transfer_screen_active) {
+      schedule_next_alarm_wakeup();
+    }
+    return;
+  }
+
+  const uint16_t requested_mask =
+      s_launch_wakeup_medication_mask;
+  s_launch_wakeup_medication_mask = 0;
+
+  alarm_start_for_request(requested_mask);
+}
+
 static void alarm_wakeup_handler(
     WakeupId wakeup_id,
     int32_t cookie
@@ -1701,11 +1727,8 @@ static void alarm_wakeup_handler(
     }
   }
 
-  s_pending_wakeup_medication_mask =
-      medication_mask;
-
   refresh_medication_rows_for_time();
-  alarm_start();
+  alarm_start_for_request(medication_mask);
   schedule_next_alarm_wakeup();
 }
 
@@ -1960,7 +1983,7 @@ void alarm_confirmation_received(
 void medication_alarm_init(void) {
   load_alarm_settings();
   medication_alarm_states_load();
-  s_pending_wakeup_medication_mask = 0;
+  s_launch_wakeup_medication_mask = 0;
 
   speaker_set_finish_callback(
     alarm_audio_finish_callback,
@@ -1986,7 +2009,7 @@ void medication_alarm_init(void) {
         &launch_medication_mask
       )
     ) {
-      s_pending_wakeup_medication_mask =
+      s_launch_wakeup_medication_mask =
           launch_medication_mask;
     } else if (
       launch_cookie != ALARM_WAKEUP_COOKIE
