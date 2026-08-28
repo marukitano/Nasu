@@ -28,16 +28,9 @@ typedef struct {
   uint8_t reserved[3];
 } MedicationAlarmState;
 
-typedef MedicationAlarmState IntervalMedicationAlarmState;
-typedef MedicationAlarmState RegularMedicationAlarmState;
-
-static IntervalMedicationAlarmState
-    s_interval_alarm_states[MAX_MEDICATIONS];
-static bool s_interval_alarm_states_loaded;
-
-static RegularMedicationAlarmState
-    s_regular_alarm_states[MAX_MEDICATIONS];
-static bool s_regular_alarm_states_loaded;
+static MedicationAlarmState
+    s_medication_alarm_states[MAX_MEDICATIONS];
+static bool s_medication_alarm_states_loaded;
 
 static time_t s_alarm_stop_time;
 static uint16_t s_alarm_due_medication_mask;
@@ -70,22 +63,26 @@ static bool alarm_window_bounds_at(
     time_t *window_end,
     MedicationTime *window_slot
 );
-static void interval_alarm_states_load(void);
-static bool persist_interval_alarm_states(void);
-static bool reset_interval_alarm_states(void);
+static void medication_alarm_states_load(void);
+static bool persist_medication_alarm_states(void);
+static bool reset_medication_alarm_states(void);
+static MedicationAlarmState *medication_alarm_state_for_occurrence(
+    uint8_t medication_index,
+    time_t occurrence_start
+);
 static bool interval_alarm_state_at(
     uint8_t medication_index,
     time_t timestamp,
     time_t *window_start,
     time_t *window_end,
-    IntervalMedicationAlarmState **state
+    MedicationAlarmState **state
 );
 static bool regular_alarm_state_at(
     uint8_t medication_index,
     time_t timestamp,
     time_t *occurrence_start,
     time_t *occurrence_end,
-    RegularMedicationAlarmState **state
+    MedicationAlarmState **state
 );
 static bool medication_alarm_state_at(
     uint8_t medication_index,
@@ -603,63 +600,145 @@ static bool alarm_window_bounds_at(
   return true;
 }
 
-static void interval_alarm_states_load(void) {
-  if (s_interval_alarm_states_loaded) {
+static void medication_alarm_states_load(void) {
+  if (s_medication_alarm_states_loaded) {
     return;
   }
 
   memset(
-    s_interval_alarm_states,
+    s_medication_alarm_states,
     0,
-    sizeof(s_interval_alarm_states)
+    sizeof(s_medication_alarm_states)
   );
 
+  const int state_bytes =
+      (int)sizeof(s_medication_alarm_states);
+
   if (
-    persist_exists(INTERVAL_ALARM_STATE_PERSIST_KEY) &&
-    persist_get_size(INTERVAL_ALARM_STATE_PERSIST_KEY) ==
-        (int)sizeof(s_interval_alarm_states)
+    persist_exists(
+      MEDICATION_ALARM_STATE_PERSIST_KEY
+    ) &&
+    persist_get_size(
+      MEDICATION_ALARM_STATE_PERSIST_KEY
+    ) == state_bytes &&
+    persist_read_data(
+      MEDICATION_ALARM_STATE_PERSIST_KEY,
+      s_medication_alarm_states,
+      sizeof(s_medication_alarm_states)
+    ) == state_bytes
   ) {
-    (void)persist_read_data(
-      INTERVAL_ALARM_STATE_PERSIST_KEY,
-      s_interval_alarm_states,
-      sizeof(s_interval_alarm_states)
-    );
+    s_medication_alarm_states_loaded = true;
+    return;
   }
 
-  s_interval_alarm_states_loaded = true;
+  /*
+   * One-time migration from the split interval/regular state stores used
+   * before the alarm core had one state per medication.
+   *
+   * Persist key 208 previously contained AlarmWindowState. Its old blob is
+   * much smaller than this array, so the size check above safely ignores it.
+   */
+  MedicationAlarmState interval_states[
+    MAX_MEDICATIONS
+  ];
+  MedicationAlarmState regular_states[
+    MAX_MEDICATIONS
+  ];
+
+  memset(
+    interval_states,
+    0,
+    sizeof(interval_states)
+  );
+  memset(
+    regular_states,
+    0,
+    sizeof(regular_states)
+  );
+
+  const bool interval_loaded =
+      persist_exists(
+        INTERVAL_ALARM_STATE_PERSIST_KEY
+      ) &&
+      persist_get_size(
+        INTERVAL_ALARM_STATE_PERSIST_KEY
+      ) == (int)sizeof(interval_states) &&
+      persist_read_data(
+        INTERVAL_ALARM_STATE_PERSIST_KEY,
+        interval_states,
+        sizeof(interval_states)
+      ) == (int)sizeof(interval_states);
+
+  const bool regular_loaded =
+      persist_exists(
+        REGULAR_ALARM_STATE_PERSIST_KEY
+      ) &&
+      persist_get_size(
+        REGULAR_ALARM_STATE_PERSIST_KEY
+      ) == (int)sizeof(regular_states) &&
+      persist_read_data(
+        REGULAR_ALARM_STATE_PERSIST_KEY,
+        regular_states,
+        sizeof(regular_states)
+      ) == (int)sizeof(regular_states);
+
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    if (
+      s_medications[index].time ==
+          MEDICATION_TIME_INTERVAL
+    ) {
+      if (interval_loaded) {
+        s_medication_alarm_states[index] =
+            interval_states[index];
+      }
+    } else if (regular_loaded) {
+      s_medication_alarm_states[index] =
+          regular_states[index];
+    }
+  }
+
+  s_medication_alarm_states_loaded = true;
+
+  if (interval_loaded || regular_loaded) {
+    (void)persist_medication_alarm_states();
+  }
 }
 
-static bool persist_interval_alarm_states(void) {
-  interval_alarm_states_load();
+static bool persist_medication_alarm_states(void) {
+  medication_alarm_states_load();
 
   return
       persist_write_data(
-        INTERVAL_ALARM_STATE_PERSIST_KEY,
-        s_interval_alarm_states,
-        sizeof(s_interval_alarm_states)
-      ) == (int)sizeof(s_interval_alarm_states);
+        MEDICATION_ALARM_STATE_PERSIST_KEY,
+        s_medication_alarm_states,
+        sizeof(s_medication_alarm_states)
+      ) == (int)sizeof(s_medication_alarm_states);
 }
 
-static bool reset_interval_alarm_states(void) {
+static bool reset_medication_alarm_states(void) {
   memset(
-    s_interval_alarm_states,
+    s_medication_alarm_states,
     0,
-    sizeof(s_interval_alarm_states)
+    sizeof(s_medication_alarm_states)
   );
-  s_interval_alarm_states_loaded = true;
+  s_medication_alarm_states_loaded = true;
 
-  if (!persist_interval_alarm_states()) {
+  if (!persist_medication_alarm_states()) {
     return false;
   }
 
-  IntervalMedicationAlarmState verified[
+  MedicationAlarmState verified[
     MAX_MEDICATIONS
   ];
   memset(verified, 0, sizeof(verified));
 
   if (
     persist_read_data(
-      INTERVAL_ALARM_STATE_PERSIST_KEY,
+      MEDICATION_ALARM_STATE_PERSIST_KEY,
       verified,
       sizeof(verified)
     ) != (int)sizeof(verified)
@@ -670,9 +749,53 @@ static bool reset_interval_alarm_states(void) {
   return
       memcmp(
         verified,
-        s_interval_alarm_states,
+        s_medication_alarm_states,
         sizeof(verified)
       ) == 0;
+}
+
+static MedicationAlarmState *medication_alarm_state_for_occurrence(
+    uint8_t medication_index,
+    time_t occurrence_start
+) {
+  if (
+    medication_index >= s_medication_count ||
+    occurrence_start <= 0
+  ) {
+    return NULL;
+  }
+
+  medication_alarm_states_load();
+
+  MedicationAlarmState *current =
+      &s_medication_alarm_states[
+        medication_index
+      ];
+
+  bool changed = false;
+
+  if (
+    current->occurrence_start !=
+        (int32_t)occurrence_start
+  ) {
+    *current = (MedicationAlarmState) {
+      .occurrence_start =
+          (int32_t)occurrence_start,
+      .last_reminder = 0,
+      .confirmed = 0,
+      .reserved = { 0, 0, 0 }
+    };
+    changed = true;
+  } else if (current->confirmed > 1) {
+    current->confirmed = 0;
+    changed = true;
+  }
+
+  if (changed) {
+    (void)persist_medication_alarm_states();
+  }
+
+  return current;
 }
 
 static bool interval_alarm_state_at(
@@ -680,7 +803,7 @@ static bool interval_alarm_state_at(
     time_t timestamp,
     time_t *window_start,
     time_t *window_end,
-    IntervalMedicationAlarmState **state
+    MedicationAlarmState **state
 ) {
   time_t occurrence_start = 0;
   time_t occurrence_end = 0;
@@ -696,29 +819,14 @@ static bool interval_alarm_state_at(
     return false;
   }
 
-  interval_alarm_states_load();
+  MedicationAlarmState *current =
+      medication_alarm_state_for_occurrence(
+        medication_index,
+        occurrence_start
+      );
 
-  IntervalMedicationAlarmState *current =
-      &s_interval_alarm_states[
-        medication_index
-      ];
-
-  if (
-    current->occurrence_start !=
-        (int32_t)occurrence_start
-  ) {
-    *current = (IntervalMedicationAlarmState) {
-      .occurrence_start =
-          (int32_t)occurrence_start,
-      .last_reminder = 0,
-      .confirmed = 0,
-      .reserved = { 0, 0, 0 }
-    };
-
-    (void)persist_interval_alarm_states();
-  } else if (current->confirmed > 1) {
-    current->confirmed = 0;
-    (void)persist_interval_alarm_states();
+  if (!current) {
+    return false;
   }
 
   if (window_start) {
@@ -734,81 +842,6 @@ static bool interval_alarm_state_at(
   return true;
 }
 
-
-static void regular_alarm_states_load(void) {
-  if (s_regular_alarm_states_loaded) {
-    return;
-  }
-
-  memset(
-    s_regular_alarm_states,
-    0,
-    sizeof(s_regular_alarm_states)
-  );
-
-  if (
-    persist_exists(
-      REGULAR_ALARM_STATE_PERSIST_KEY
-    ) &&
-    persist_get_size(
-      REGULAR_ALARM_STATE_PERSIST_KEY
-    ) == (int)sizeof(s_regular_alarm_states)
-  ) {
-    (void)persist_read_data(
-      REGULAR_ALARM_STATE_PERSIST_KEY,
-      s_regular_alarm_states,
-      sizeof(s_regular_alarm_states)
-    );
-  }
-
-  s_regular_alarm_states_loaded = true;
-}
-
-static bool persist_regular_alarm_states(void) {
-  regular_alarm_states_load();
-
-  return
-      persist_write_data(
-        REGULAR_ALARM_STATE_PERSIST_KEY,
-        s_regular_alarm_states,
-        sizeof(s_regular_alarm_states)
-      ) == (int)sizeof(s_regular_alarm_states);
-}
-
-static bool reset_regular_alarm_states(void) {
-  memset(
-    s_regular_alarm_states,
-    0,
-    sizeof(s_regular_alarm_states)
-  );
-  s_regular_alarm_states_loaded = true;
-
-  if (!persist_regular_alarm_states()) {
-    return false;
-  }
-
-  RegularMedicationAlarmState verified[
-    MAX_MEDICATIONS
-  ];
-  memset(verified, 0, sizeof(verified));
-
-  if (
-    persist_read_data(
-      REGULAR_ALARM_STATE_PERSIST_KEY,
-      verified,
-      sizeof(verified)
-    ) != (int)sizeof(verified)
-  ) {
-    return false;
-  }
-
-  return
-      memcmp(
-        verified,
-        s_regular_alarm_states,
-        sizeof(verified)
-      ) == 0;
-}
 
 static bool regular_alarm_timestamp_for_window(
     uint8_t medication_index,
@@ -900,7 +933,7 @@ static bool regular_alarm_state_at(
     time_t timestamp,
     time_t *occurrence_start,
     time_t *occurrence_end,
-    RegularMedicationAlarmState **state
+    MedicationAlarmState **state
 ) {
   time_t window_start = 0;
   time_t window_end = 0;
@@ -926,29 +959,14 @@ static bool regular_alarm_state_at(
     return false;
   }
 
-  regular_alarm_states_load();
+  MedicationAlarmState *current =
+      medication_alarm_state_for_occurrence(
+        medication_index,
+        alarm_time
+      );
 
-  RegularMedicationAlarmState *current =
-      &s_regular_alarm_states[
-        medication_index
-      ];
-
-  if (
-    current->occurrence_start !=
-        (int32_t)alarm_time
-  ) {
-    *current = (RegularMedicationAlarmState) {
-      .occurrence_start =
-          (int32_t)alarm_time,
-      .last_reminder = 0,
-      .confirmed = 0,
-      .reserved = { 0, 0, 0 }
-    };
-
-    (void)persist_regular_alarm_states();
-  } else if (current->confirmed > 1) {
-    current->confirmed = 0;
-    (void)persist_regular_alarm_states();
+  if (!current) {
+    return false;
   }
 
   if (occurrence_start) {
@@ -1673,8 +1691,7 @@ static void record_alarm_reminder_at(
         timestamp - (timestamp % 60)
       );
 
-  bool regular_changed = false;
-  bool interval_changed = false;
+  bool state_changed = false;
 
   for (
     uint8_t index = 0;
@@ -1708,23 +1725,11 @@ static void record_alarm_reminder_at(
 
     state->last_reminder =
         minute_timestamp;
-
-    if (
-      s_medications[index].time ==
-          MEDICATION_TIME_INTERVAL
-    ) {
-      interval_changed = true;
-    } else {
-      regular_changed = true;
-    }
+    state_changed = true;
   }
 
-  if (regular_changed) {
-    (void)persist_regular_alarm_states();
-  }
-
-  if (interval_changed) {
-    (void)persist_interval_alarm_states();
+  if (state_changed) {
+    (void)persist_medication_alarm_states();
   }
 }
 
@@ -1910,10 +1915,8 @@ bool alarm_reset_after_settings_save(void) {
     return false;
   }
 
-  const bool regular_reset_verified =
-      reset_regular_alarm_states();
-  const bool interval_reset_verified =
-      reset_interval_alarm_states();
+  const bool state_reset_verified =
+      reset_medication_alarm_states();
 
   /*
    * Saving settings must not resurrect an occurrence whose start minute
@@ -1930,13 +1933,9 @@ bool alarm_reset_after_settings_save(void) {
    * If an alarm time is in the CURRENT minute, it is deliberately left
    * unconfirmed so a just-saved alarm can still fire.
    */
-  bool regular_seed_verified = true;
-  bool interval_seed_verified = true;
+  bool seed_verified = true;
 
-  if (
-    regular_reset_verified &&
-    interval_reset_verified
-  ) {
+  if (state_reset_verified) {
     for (
       uint8_t index = 0;
       index < s_medication_count;
@@ -1962,8 +1961,8 @@ bool alarm_reset_after_settings_save(void) {
           ) &&
           occurrence_start < current_minute
         ) {
-          s_interval_alarm_states[index] =
-              (IntervalMedicationAlarmState) {
+          s_medication_alarm_states[index] =
+              (MedicationAlarmState) {
                 .occurrence_start =
                     (int32_t)occurrence_start,
                 .last_reminder = 0,
@@ -1987,8 +1986,8 @@ bool alarm_reset_after_settings_save(void) {
         alarm_time < current_minute &&
         alarm_time < window_end
       ) {
-        s_regular_alarm_states[index] =
-            (RegularMedicationAlarmState) {
+        s_medication_alarm_states[index] =
+            (MedicationAlarmState) {
               .occurrence_start =
                   (int32_t)alarm_time,
               .last_reminder = 0,
@@ -1998,17 +1997,13 @@ bool alarm_reset_after_settings_save(void) {
       }
     }
 
-    regular_seed_verified =
-        persist_regular_alarm_states();
-    interval_seed_verified =
-        persist_interval_alarm_states();
+    seed_verified =
+        persist_medication_alarm_states();
   }
 
   const bool reset_verified =
-      regular_reset_verified &&
-      interval_reset_verified &&
-      regular_seed_verified &&
-      interval_seed_verified;
+      state_reset_verified &&
+      seed_verified;
 
   if (!reset_verified) {
     APP_LOG(
@@ -2072,8 +2067,7 @@ void alarm_confirmation_received(
     return;
   }
 
-  bool regular_changed = false;
-  bool interval_changed = false;
+  bool state_changed = false;
 
   for (
     uint8_t index = 0;
@@ -2109,23 +2103,11 @@ void alarm_confirmation_received(
     }
 
     state->confirmed = 1;
-
-    if (
-      s_medications[index].time ==
-          MEDICATION_TIME_INTERVAL
-    ) {
-      interval_changed = true;
-    } else {
-      regular_changed = true;
-    }
+    state_changed = true;
   }
 
-  if (regular_changed) {
-    (void)persist_regular_alarm_states();
-  }
-
-  if (interval_changed) {
-    (void)persist_interval_alarm_states();
+  if (state_changed) {
+    (void)persist_medication_alarm_states();
   }
 
   s_alarm_due_medication_mask &=
@@ -2144,8 +2126,7 @@ void alarm_confirmation_received(
 
 void medication_alarm_init(void) {
   load_alarm_settings();
-  regular_alarm_states_load();
-  interval_alarm_states_load();
+  medication_alarm_states_load();
   s_pending_wakeup_medication_mask = 0;
 
   speaker_set_finish_callback(
