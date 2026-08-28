@@ -68,6 +68,12 @@ static bool alarm_window_bounds_at(
     time_t *window_end,
     MedicationTime *window_slot
 );
+static bool medication_interval_window_at(
+    uint8_t medication_index,
+    time_t timestamp,
+    time_t *window_start,
+    time_t *window_end
+);
 static void medication_alarm_states_load(void);
 static bool persist_medication_alarm_states(void);
 static bool reset_medication_alarm_states(void);
@@ -592,6 +598,108 @@ static bool alarm_window_bounds_at(
   }
   if (window_slot) {
     *window_slot = slot;
+  }
+
+  return true;
+}
+
+static bool medication_interval_window_at(
+    uint8_t medication_index,
+    time_t timestamp,
+    time_t *window_start,
+    time_t *window_end
+) {
+  if (medication_index >= s_medication_count) {
+    return false;
+  }
+
+  const MedicationSettings *medication =
+      &s_medications[medication_index];
+  const MedicationIntervalSettings *interval =
+      medication_interval_settings_at(
+        medication_index
+      );
+
+  if (
+    !medication->enabled ||
+    medication->time != MEDICATION_TIME_INTERVAL ||
+    medication->schedule != MEDICATION_SCHEDULE_DAILY ||
+    !interval ||
+    !medication_interval_hours_valid(interval->hours) ||
+    interval->start_hour > 23 ||
+    interval->start_minute > 59
+  ) {
+    return false;
+  }
+
+  struct tm *local_ptr = localtime(&timestamp);
+
+  if (!local_ptr) {
+    return false;
+  }
+
+  const struct tm local = *local_ptr;
+  const int interval_minutes =
+      interval->hours * 60;
+  const int configured_start_minute =
+      interval->start_hour * 60 +
+      interval->start_minute;
+
+  /*
+   * The configured start defines the clock phase, not a confirmation-based
+   * delay. Example 07:00 / 4 h stays 07,11,15,19,23,03 even when 11:00 is
+   * confirmed late.
+   */
+  const int phase_minute =
+      configured_start_minute % interval_minutes;
+  const int current_minute =
+      local.tm_hour * 60 + local.tm_min;
+
+  int delta =
+      (current_minute - phase_minute) %
+      interval_minutes;
+
+  if (delta < 0) {
+    delta += interval_minutes;
+  }
+
+  int occurrence_minute =
+      current_minute - delta;
+  int day_offset = 0;
+
+  if (occurrence_minute < 0) {
+    occurrence_minute += DAYPART_MINUTES_PER_DAY;
+    day_offset = -1;
+  }
+
+  struct tm start_tm = local;
+  start_tm.tm_mday += day_offset;
+  start_tm.tm_hour = occurrence_minute / 60;
+  start_tm.tm_min = occurrence_minute % 60;
+  start_tm.tm_sec = 0;
+  start_tm.tm_isdst = -1;
+
+  struct tm end_tm = start_tm;
+  end_tm.tm_min += interval_minutes;
+  end_tm.tm_isdst = -1;
+
+  const time_t start = mktime(&start_tm);
+  const time_t end = mktime(&end_tm);
+
+  if (
+    start <= 0 ||
+    end <= start ||
+    timestamp < start ||
+    timestamp >= end
+  ) {
+    return false;
+  }
+
+  if (window_start) {
+    *window_start = start;
+  }
+  if (window_end) {
+    *window_end = end;
   }
 
   return true;
