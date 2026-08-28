@@ -1031,52 +1031,25 @@ static uint16_t alarm_event_medication_mask_at(
   ) {
     time_t occurrence_start = 0;
     time_t occurrence_end = 0;
-    int32_t last_reminder = 0;
-    bool confirmed = false;
-    bool occurrence_valid = false;
+    MedicationAlarmState *state = NULL;
 
-    if (
-      s_medications[index].time ==
-          MEDICATION_TIME_INTERVAL
-    ) {
-      IntervalMedicationAlarmState *state = NULL;
+    const bool occurrence_valid =
+        medication_alarm_state_at(
+          index,
+          timestamp,
+          &occurrence_start,
+          &occurrence_end,
+          &state
+        ) &&
+        state;
 
-      occurrence_valid =
-          interval_alarm_state_at(
-            index,
-            timestamp,
-            &occurrence_start,
-            &occurrence_end,
-            &state
-          ) &&
-          state;
-
-      if (occurrence_valid) {
-        last_reminder =
-            state->last_reminder;
-        confirmed =
-            state->confirmed != 0;
-      }
-    } else {
-      RegularMedicationAlarmState *state = NULL;
-
-      occurrence_valid =
-          regular_alarm_state_at(
-            index,
-            timestamp,
-            &occurrence_start,
-            &occurrence_end,
-            &state
-          ) &&
-          state;
-
-      if (occurrence_valid) {
-        last_reminder =
-            state->last_reminder;
-        confirmed =
-            state->confirmed != 0;
-      }
-    }
+    const int32_t last_reminder =
+        occurrence_valid
+            ? state->last_reminder
+            : 0;
+    const bool confirmed =
+        occurrence_valid &&
+        state->confirmed != 0;
 
     if (
       !occurrence_valid ||
