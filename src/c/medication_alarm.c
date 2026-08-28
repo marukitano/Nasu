@@ -28,18 +28,14 @@ typedef struct {
   int32_t last_reminder;
   uint8_t confirmed;
   uint8_t reserved[3];
-} IntervalMedicationAlarmState;
+} MedicationAlarmState;
+
+typedef MedicationAlarmState IntervalMedicationAlarmState;
+typedef MedicationAlarmState RegularMedicationAlarmState;
 
 static IntervalMedicationAlarmState
     s_interval_alarm_states[MAX_MEDICATIONS];
 static bool s_interval_alarm_states_loaded;
-
-typedef struct {
-  int32_t occurrence_start;
-  int32_t last_reminder;
-  uint8_t confirmed;
-  uint8_t reserved[3];
-} RegularMedicationAlarmState;
 
 static RegularMedicationAlarmState
     s_regular_alarm_states[MAX_MEDICATIONS];
