@@ -40,7 +40,10 @@
       "SETTINGS_TRANSACTION": 26,
       "SETTINGS_ACK": 27,
       "LANGUAGE": 28,
-      "SHOW_JAPANESE_PATTERN": 30
+      "MED_INTERVAL_HOURS": 29,
+      "SHOW_JAPANESE_PATTERN": 30,
+      "MED_INTERVAL_START_HOUR": 31,
+      "MED_INTERVAL_START_MINUTE": 32
     },
     "projectType": "native",
     "resources": {

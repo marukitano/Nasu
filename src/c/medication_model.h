@@ -7,6 +7,13 @@ bool medication_is_scheduled_on_date(
     const MedicationSettings *medication,
     const struct tm *local_date
 );
+bool medication_interval_hours_valid(int value);
+bool medication_interval_window_at(
+    uint8_t medication_index,
+    time_t timestamp,
+    time_t *window_start,
+    time_t *window_end
+);
 bool medication_is_due_at(
     const MedicationSettings *medication,
     time_t timestamp

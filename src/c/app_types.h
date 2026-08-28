@@ -111,7 +111,7 @@
 #define MEDICATION_DOSAGE_LENGTH 21
 #define MEDICATION_EFFECT_LENGTH 32
 #define MEDICATION_LABEL_LENGTH 48
-#define MAX_MEDICATIONS 8
+#define MAX_MEDICATIONS 16
 #define MAX_LIST_ROWS MAX_MEDICATIONS
 
 #define DAYPART_PERSIST_KEY 204
@@ -121,6 +121,8 @@
 #define ALARM_WINDOW_STATE_PERSIST_KEY 208
 #define LANGUAGE_PERSIST_KEY 209
 #define SHOW_JAPANESE_PATTERN_PERSIST_KEY 212
+#define MEDICATION_INTERVAL_SETTINGS_PERSIST_KEY 213
+#define INTERVAL_ALARM_STATE_PERSIST_KEY 214
 #define DAYPART_MINUTES_PER_DAY 1440
 #define LEGACY_DEFAULT_MORNING_START_MINUTE (5 * 60)
 #define LEGACY_DEFAULT_NOON_START_MINUTE (11 * 60)
@@ -203,7 +205,8 @@ typedef enum {
   MEDICATION_TIME_MORNING,
   MEDICATION_TIME_NOON,
   MEDICATION_TIME_EVENING,
-  MEDICATION_TIME_NIGHT
+  MEDICATION_TIME_NIGHT,
+  MEDICATION_TIME_INTERVAL
 } MedicationTime;
 
 typedef enum {
@@ -256,6 +259,16 @@ typedef struct {
   uint8_t icon_set;
   uint8_t enabled;
 } MedicationSettings;
+
+/*
+ * Kept separate from MedicationSettings on purpose. This preserves the exact
+ * persisted MedicationSettings layout used by already installed Nasu 1.0.
+ */
+typedef struct {
+  uint8_t hours;
+  uint8_t start_hour;
+  uint8_t start_minute;
+} MedicationIntervalSettings;
 
 typedef struct {
   uint16_t morning;
@@ -356,7 +369,15 @@ typedef struct {
 
 #define MEDICATION_APPEARANCE_IMPRINT_LENGTH 6
 #define MEDICATION_APPEARANCE_COUNT_PERSIST_KEY 219
-#define MEDICATION_APPEARANCE_PERSIST_KEY_BASE 220
+
+/*
+ * Nasu 1.0 stored up to eight appearance blobs at keys 220..227.
+ * With sixteen medications that range would overlap MEDICATION_ITEM keys
+ * 230..245, so new appearance blobs live safely at 260..275.
+ */
+#define LEGACY_MAX_MEDICATIONS 8
+#define LEGACY_MEDICATION_APPEARANCE_PERSIST_KEY_BASE 220
+#define MEDICATION_APPEARANCE_PERSIST_KEY_BASE 260
 
 typedef struct {
   bool valid;

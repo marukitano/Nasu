@@ -20,6 +20,18 @@ static AppTimer *s_alarm_intro_timer;
 static bool s_alarm_visuals_are_paused;
 
 static bool s_alarm_window_state_loaded;
+
+typedef struct {
+  int32_t occurrence_start;
+  int32_t last_reminder;
+  uint8_t confirmed;
+  uint8_t reserved[3];
+} IntervalMedicationAlarmState;
+
+static IntervalMedicationAlarmState
+    s_interval_alarm_states[MAX_MEDICATIONS];
+static bool s_interval_alarm_states_loaded;
+
 static time_t s_alarm_stop_time;
 static uint8_t s_alarm_due_symbol_mask;
 static AppTimer *s_alarm_pulse_timer;
@@ -51,12 +63,28 @@ static bool alarm_window_bounds_at(
     MedicationTime *window_slot
 );
 static void persist_alarm_window_state(void);
+static void interval_alarm_states_load(void);
+static bool persist_interval_alarm_states(void);
+static bool reset_interval_alarm_states(void);
+static bool interval_alarm_state_at(
+    uint8_t medication_index,
+    time_t timestamp,
+    time_t *window_start,
+    time_t *window_end,
+    IntervalMedicationAlarmState **state
+);
+static uint8_t alarm_unconfirmed_regular_symbol_mask_at(
+    time_t timestamp
+);
 static uint8_t alarm_symbol_mask_for_window(
     time_t window_start,
     MedicationTime slot
 );
 static time_t next_due_window_start_after(time_t now);
+static time_t next_interval_alarm_timestamp_after(time_t now);
 static time_t next_alarm_timestamp_after(time_t now);
+static bool interval_reminder_due_at(time_t timestamp);
+static void record_alarm_reminder_at(time_t timestamp);
 static void alarm_vibrate(void);
 static void alarm_pulse_timer_handler(void *context);
 static void alarm_wakeup_handler(
@@ -490,6 +518,137 @@ static bool alarm_window_bounds_at(
   return true;
 }
 
+static void interval_alarm_states_load(void) {
+  if (s_interval_alarm_states_loaded) {
+    return;
+  }
+
+  memset(
+    s_interval_alarm_states,
+    0,
+    sizeof(s_interval_alarm_states)
+  );
+
+  if (
+    persist_exists(INTERVAL_ALARM_STATE_PERSIST_KEY) &&
+    persist_get_size(INTERVAL_ALARM_STATE_PERSIST_KEY) ==
+        (int)sizeof(s_interval_alarm_states)
+  ) {
+    (void)persist_read_data(
+      INTERVAL_ALARM_STATE_PERSIST_KEY,
+      s_interval_alarm_states,
+      sizeof(s_interval_alarm_states)
+    );
+  }
+
+  s_interval_alarm_states_loaded = true;
+}
+
+static bool persist_interval_alarm_states(void) {
+  interval_alarm_states_load();
+
+  return
+      persist_write_data(
+        INTERVAL_ALARM_STATE_PERSIST_KEY,
+        s_interval_alarm_states,
+        sizeof(s_interval_alarm_states)
+      ) == (int)sizeof(s_interval_alarm_states);
+}
+
+static bool reset_interval_alarm_states(void) {
+  memset(
+    s_interval_alarm_states,
+    0,
+    sizeof(s_interval_alarm_states)
+  );
+  s_interval_alarm_states_loaded = true;
+
+  if (!persist_interval_alarm_states()) {
+    return false;
+  }
+
+  IntervalMedicationAlarmState verified[
+    MAX_MEDICATIONS
+  ];
+  memset(verified, 0, sizeof(verified));
+
+  if (
+    persist_read_data(
+      INTERVAL_ALARM_STATE_PERSIST_KEY,
+      verified,
+      sizeof(verified)
+    ) != (int)sizeof(verified)
+  ) {
+    return false;
+  }
+
+  return
+      memcmp(
+        verified,
+        s_interval_alarm_states,
+        sizeof(verified)
+      ) == 0;
+}
+
+static bool interval_alarm_state_at(
+    uint8_t medication_index,
+    time_t timestamp,
+    time_t *window_start,
+    time_t *window_end,
+    IntervalMedicationAlarmState **state
+) {
+  time_t occurrence_start = 0;
+  time_t occurrence_end = 0;
+
+  if (
+    !medication_interval_window_at(
+      medication_index,
+      timestamp,
+      &occurrence_start,
+      &occurrence_end
+    )
+  ) {
+    return false;
+  }
+
+  interval_alarm_states_load();
+
+  IntervalMedicationAlarmState *current =
+      &s_interval_alarm_states[
+        medication_index
+      ];
+
+  if (
+    current->occurrence_start !=
+        (int32_t)occurrence_start
+  ) {
+    *current = (IntervalMedicationAlarmState) {
+      .occurrence_start =
+          (int32_t)occurrence_start,
+      .last_reminder = 0,
+      .confirmed = 0,
+      .reserved = { 0, 0, 0 }
+    };
+
+    (void)persist_interval_alarm_states();
+  } else if (current->confirmed > 1) {
+    current->confirmed = 0;
+    (void)persist_interval_alarm_states();
+  }
+
+  if (window_start) {
+    *window_start = occurrence_start;
+  }
+  if (window_end) {
+    *window_end = occurrence_end;
+  }
+  if (state) {
+    *state = current;
+  }
+
+  return true;
+}
+
 static void persist_alarm_window_state(void) {
   persist_write_data(
     ALARM_WINDOW_STATE_PERSIST_KEY,
@@ -585,7 +744,7 @@ static uint8_t alarm_symbol_mask_for_window(
   return mask;
 }
 
-uint8_t alarm_unconfirmed_symbol_mask_at(
+static uint8_t alarm_unconfirmed_regular_symbol_mask_at(
     time_t timestamp
 ) {
   time_t window_start;
@@ -612,41 +771,151 @@ uint8_t alarm_unconfirmed_symbol_mask_at(
       (uint8_t)~s_alarm_window_state.confirmed_mask;
 }
 
-bool alarm_intake_navigation_lock_required(void) {
-  const time_t now = time(NULL);
-  time_t window_start;
+bool alarm_medication_is_unconfirmed_due_at(
+    uint8_t medication_index,
+    time_t timestamp
+) {
+  if (medication_index >= s_medication_count) {
+    return false;
+  }
+
+  const MedicationSettings *medication =
+      &s_medications[medication_index];
 
   if (
-    !alarm_window_bounds_at(
+    medication->time ==
+        MEDICATION_TIME_INTERVAL
+  ) {
+    IntervalMedicationAlarmState *state = NULL;
+
+    return
+        interval_alarm_state_at(
+          medication_index,
+          timestamp,
+          NULL,
+          NULL,
+          &state
+        ) &&
+        state &&
+        !state->confirmed;
+  }
+
+  if (
+    !medication_is_due_at(
+      medication,
+      timestamp
+    )
+  ) {
+    return false;
+  }
+
+  alarm_refresh_window_state();
+
+  const uint8_t symbol_mask =
+      (uint8_t)(1u << medication->symbol);
+
+  return
+      (s_alarm_window_state.confirmed_mask &
+       symbol_mask) == 0;
+}
+
+uint8_t alarm_unconfirmed_symbol_mask_at(
+    time_t timestamp
+) {
+  uint8_t mask =
+      alarm_unconfirmed_regular_symbol_mask_at(
+        timestamp
+      );
+
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    const MedicationSettings *medication =
+        &s_medications[index];
+
+    if (
+      medication->time !=
+          MEDICATION_TIME_INTERVAL ||
+      !alarm_medication_is_unconfirmed_due_at(
+        index,
+        timestamp
+      )
+    ) {
+      continue;
+    }
+
+    mask |=
+        (uint8_t)(1u << medication->symbol);
+  }
+
+  return mask;
+}
+
+bool alarm_intake_navigation_lock_required(void) {
+  const time_t now = time(NULL);
+  time_t window_start = 0;
+
+  if (
+    alarm_window_bounds_at(
       now,
       &window_start,
       NULL,
       NULL
     )
   ) {
-    return false;
+    alarm_refresh_window_state();
+
+    if (
+      s_alarm_window_state.last_reminder >=
+          (int32_t)window_start &&
+      alarm_unconfirmed_regular_symbol_mask_at(
+        now
+      ) != 0
+    ) {
+      return true;
+    }
   }
 
-  /*
-   * last_reminder is persisted for the current intake window. A value inside
-   * this window means at least one real alarm/reminder has already fired.
-   * Merely opening Nasu before the first alarm therefore does not lock the UI.
-   */
-  alarm_refresh_window_state();
-
-  if (
-    s_alarm_window_state.last_reminder <
-        (int32_t)window_start
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
   ) {
-    return false;
+    if (
+      s_medications[index].time !=
+          MEDICATION_TIME_INTERVAL
+    ) {
+      continue;
+    }
+
+    time_t occurrence_start = 0;
+    IntervalMedicationAlarmState *state = NULL;
+
+    if (
+      !interval_alarm_state_at(
+        index,
+        now,
+        &occurrence_start,
+        NULL,
+        &state
+      ) ||
+      !state ||
+      state->confirmed
+    ) {
+      continue;
+    }
+
+    if (
+      state->last_reminder >=
+          (int32_t)occurrence_start
+    ) {
+      return true;
+    }
   }
 
-  /*
-   * Keep the intake flow locked after vibration/audio stop and across app
-   * restarts until every due medication group in this window is confirmed.
-   */
-  return
-      alarm_unconfirmed_symbol_mask_at(now) != 0;
+  return false;
 }
 
 static time_t next_due_window_start_after(time_t now) {
@@ -692,7 +961,93 @@ static time_t next_due_window_start_after(time_t now) {
   return 0;
 }
 
+static time_t next_interval_alarm_timestamp_after(
+    time_t now
+) {
+  time_t best = 0;
+
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    if (
+      !s_medications[index].enabled ||
+      s_medications[index].time !=
+          MEDICATION_TIME_INTERVAL
+    ) {
+      continue;
+    }
+
+    time_t occurrence_start = 0;
+    time_t occurrence_end = 0;
+    IntervalMedicationAlarmState *state = NULL;
+
+    if (
+      !interval_alarm_state_at(
+        index,
+        now,
+        &occurrence_start,
+        &occurrence_end,
+        &state
+      ) ||
+      !state
+    ) {
+      continue;
+    }
+
+    if (!state->confirmed) {
+      time_t reminder_candidate;
+
+      if (
+        state->last_reminder <
+            (int32_t)occurrence_start
+      ) {
+        reminder_candidate =
+            ((now / 60) + 1) * 60;
+      } else {
+        reminder_candidate =
+            (time_t)state->last_reminder +
+            (time_t)s_alarm_reminder_interval_minutes *
+                60;
+
+        if (reminder_candidate <= now) {
+          reminder_candidate =
+              ((now / 60) + 1) * 60;
+        }
+      }
+
+      if (
+        reminder_candidate > now &&
+        reminder_candidate < occurrence_end &&
+        (
+          best == 0 ||
+          reminder_candidate < best
+        )
+      ) {
+        best = reminder_candidate;
+      }
+    }
+
+    /* Current window end is the next fixed interval occurrence. */
+    if (
+      occurrence_end > now &&
+      (
+        best == 0 ||
+        occurrence_end < best
+      )
+    ) {
+      best = occurrence_end;
+    }
+  }
+
+  return best;
+}
+
 static time_t next_alarm_timestamp_after(time_t now) {
+  time_t best =
+      next_due_window_start_after(now);
+
   time_t window_start;
   time_t window_end;
 
@@ -703,7 +1058,9 @@ static time_t next_alarm_timestamp_after(time_t now) {
       &window_end,
       NULL
     ) &&
-    alarm_unconfirmed_symbol_mask_at(now) != 0
+    alarm_unconfirmed_regular_symbol_mask_at(
+      now
+    ) != 0
   ) {
     time_t candidate;
 
@@ -711,12 +1068,6 @@ static time_t next_alarm_timestamp_after(time_t now) {
       s_alarm_window_state.last_reminder <
           (int32_t)window_start
     ) {
-      /*
-       * Alarmzeiten sind minutengenau. Beginnt Nasu mitten in einem bereits
-       * fälligen Fenster, ist der erste Reminder deshalb die nächste volle
-       * Minute statt "jetzt + 60 s". So bleibt derselbe Zeitpunkt auch dann
-       * stabil, wenn die App im Vordergrund weiterläuft.
-       */
       candidate =
           ((now / 60) + 1) * 60;
     } else {
@@ -730,12 +1081,32 @@ static time_t next_alarm_timestamp_after(time_t now) {
       }
     }
 
-    if (candidate < window_end) {
-      return candidate;
+    if (
+      candidate > now &&
+      candidate < window_end &&
+      (
+        best == 0 ||
+        candidate < best
+      )
+    ) {
+      best = candidate;
     }
   }
 
-  return next_due_window_start_after(now);
+  const time_t interval_candidate =
+      next_interval_alarm_timestamp_after(now);
+
+  if (
+    interval_candidate > now &&
+    (
+      best == 0 ||
+      interval_candidate < best
+    )
+  ) {
+    best = interval_candidate;
+  }
+
+  return best;
 }
 
 time_t alarm_next_timestamp(void) {
@@ -865,6 +1236,63 @@ static void alarm_pulse_timer_handler(void *context) {
   }
 }
 
+static void record_alarm_reminder_at(
+    time_t timestamp
+) {
+  const int32_t minute_timestamp =
+      (int32_t)(
+        timestamp - (timestamp % 60)
+      );
+
+  if (
+    alarm_unconfirmed_regular_symbol_mask_at(
+      timestamp
+    ) != 0
+  ) {
+    s_alarm_window_state.last_reminder =
+        minute_timestamp;
+    persist_alarm_window_state();
+  }
+
+  bool interval_changed = false;
+
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    if (
+      s_medications[index].time !=
+          MEDICATION_TIME_INTERVAL
+    ) {
+      continue;
+    }
+
+    IntervalMedicationAlarmState *state = NULL;
+
+    if (
+      !interval_alarm_state_at(
+        index,
+        timestamp,
+        NULL,
+        NULL,
+        &state
+      ) ||
+      !state ||
+      state->confirmed
+    ) {
+      continue;
+    }
+
+    state->last_reminder = minute_timestamp;
+    interval_changed = true;
+  }
+
+  if (interval_changed) {
+    (void)persist_interval_alarm_states();
+  }
+}
+
 void alarm_start(void) {
   if (s_alarm_active) {
     return;
@@ -887,13 +1315,10 @@ void alarm_start(void) {
 
   alarm_refresh_window_state();
   /*
-   * Reminder-Intervalle sind minutengenau. Wakeups können vom System ein
-   * paar Sekunden nach der Zielminute geliefert werden; diese Verzögerung
-   * darf nicht alle folgenden Reminder dauerhaft nach hinten verschieben.
+   * Regular daypart doses and interval doses keep their reminder timestamps
+   * independently. A late wakeup therefore never shifts the fixed plan.
    */
-  s_alarm_window_state.last_reminder =
-      (int32_t)(now - (now % 60));
-  persist_alarm_window_state();
+  record_alarm_reminder_at(now);
 
   s_alarm_due_symbol_mask = due_mask;
   s_alarm_active = true;
@@ -935,6 +1360,62 @@ static void alarm_wakeup_handler(
   schedule_next_alarm_wakeup();
 }
 
+static bool interval_reminder_due_at(
+    time_t timestamp
+) {
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    if (
+      s_medications[index].time !=
+          MEDICATION_TIME_INTERVAL
+    ) {
+      continue;
+    }
+
+    time_t occurrence_start = 0;
+    time_t occurrence_end = 0;
+    IntervalMedicationAlarmState *state = NULL;
+
+    if (
+      !interval_alarm_state_at(
+        index,
+        timestamp,
+        &occurrence_start,
+        &occurrence_end,
+        &state
+      ) ||
+      !state ||
+      state->confirmed
+    ) {
+      continue;
+    }
+
+    if (
+      state->last_reminder <
+          (int32_t)occurrence_start
+    ) {
+      return true;
+    }
+
+    const time_t next_reminder =
+        (time_t)state->last_reminder +
+        (time_t)s_alarm_reminder_interval_minutes *
+            60;
+
+    if (
+      timestamp >= next_reminder &&
+      timestamp < occurrence_end
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 static bool alarm_reminder_due_at(
     time_t timestamp
 ) {
@@ -949,44 +1430,38 @@ static bool alarm_reminder_due_at(
   time_t window_end;
 
   if (
-    !alarm_window_bounds_at(
+    alarm_window_bounds_at(
       timestamp,
       &window_start,
       &window_end,
       NULL
-    ) ||
-    timestamp >= window_end
-  ) {
-    return false;
-  }
-
-  /*
-   * Diese Funktion aktualisiert zugleich den persistierten Fensterzustand.
-   * Dadurch nutzen Foreground und Wakeup dieselbe Fälligkeitslogik.
-   */
-  if (
-    alarm_unconfirmed_symbol_mask_at(
+    ) &&
+    timestamp < window_end &&
+    alarm_unconfirmed_regular_symbol_mask_at(
       timestamp
-    ) == 0
+    ) != 0
   ) {
-    return false;
-  }
+    if (
+      s_alarm_window_state.last_reminder <
+          (int32_t)window_start
+    ) {
+      return true;
+    }
 
-  if (
-    s_alarm_window_state.last_reminder <
-        (int32_t)window_start
-  ) {
-    return true;
-  }
+    const time_t next_reminder =
+        (time_t)s_alarm_window_state.last_reminder +
+        (time_t)s_alarm_reminder_interval_minutes *
+            60;
 
-  const time_t next_reminder =
-      (time_t)s_alarm_window_state.last_reminder +
-      (time_t)s_alarm_reminder_interval_minutes *
-          60;
-
-  return
+    if (
       timestamp >= next_reminder &&
-      timestamp < window_end;
+      timestamp < window_end
+    ) {
+      return true;
+    }
+  }
+
+  return interval_reminder_due_at(timestamp);
 }
 
 void alarm_handle_minute_tick(
@@ -1063,6 +1538,9 @@ bool alarm_reset_after_settings_save(void) {
         sizeof(verified)
       );
 
+  const bool interval_reset_verified =
+      reset_interval_alarm_states();
+
   const bool reset_verified =
       bytes_written ==
           (int)sizeof(s_alarm_window_state) &&
@@ -1070,7 +1548,8 @@ bool alarm_reset_after_settings_save(void) {
       verified.window_start ==
           s_alarm_window_state.window_start &&
       verified.last_reminder == 0 &&
-      verified.confirmed_mask == 0;
+      verified.confirmed_mask == 0 &&
+      interval_reset_verified;
 
   if (!reset_verified) {
     APP_LOG(
@@ -1095,14 +1574,64 @@ bool alarm_reset_after_settings_save(void) {
 void alarm_confirmation_received(
     MedicationSymbol symbol
 ) {
-  alarm_refresh_window_state();
-
+  const time_t now = time(NULL);
   const uint8_t symbol_mask =
       (uint8_t)(1u << symbol);
 
-  s_alarm_window_state.confirmed_mask |=
-      symbol_mask;
-  persist_alarm_window_state();
+  alarm_refresh_window_state();
+
+  /* Keep the existing daypart confirmation semantics unchanged. */
+  if (
+    alarm_unconfirmed_regular_symbol_mask_at(
+      now
+    ) & symbol_mask
+  ) {
+    s_alarm_window_state.confirmed_mask |=
+        symbol_mask;
+    persist_alarm_window_state();
+  }
+
+  /*
+   * Interval confirmation is per medication and per concrete occurrence.
+   * Confirming 07:00 can therefore never pre-confirm the 11:00 occurrence.
+   */
+  bool interval_changed = false;
+
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    if (
+      s_medications[index].time !=
+          MEDICATION_TIME_INTERVAL ||
+      s_medications[index].symbol !=
+          (uint8_t)symbol
+    ) {
+      continue;
+    }
+
+    IntervalMedicationAlarmState *state = NULL;
+
+    if (
+      interval_alarm_state_at(
+        index,
+        now,
+        NULL,
+        NULL,
+        &state
+      ) &&
+      state &&
+      !state->confirmed
+    ) {
+      state->confirmed = 1;
+      interval_changed = true;
+    }
+  }
+
+  if (interval_changed) {
+    (void)persist_interval_alarm_states();
+  }
 
   s_alarm_due_symbol_mask &=
       (uint8_t)~symbol_mask;
@@ -1120,6 +1649,7 @@ void alarm_confirmation_received(
 
 void medication_alarm_init(void) {
   load_alarm_settings();
+  interval_alarm_states_load();
 
   speaker_set_finish_callback(
     alarm_audio_finish_callback,

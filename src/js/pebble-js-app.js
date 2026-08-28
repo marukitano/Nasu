@@ -7,7 +7,7 @@ var DAYPART_STORAGE_KEY = 'pill-reminder-dayparts-v1';
 var ALARM_STORAGE_KEY = 'pill-reminder-alarm-v1';
 var SETTINGS_TRANSACTION_STORAGE_KEY = 'pill-reminder-settings-transaction-v1';
 
-var MAX_MEDICATIONS = 8;
+var MAX_MEDICATIONS = 16;
 var MINUTES_PER_DAY = 1440;
 
 var THEME_KEY = 0;
@@ -39,7 +39,10 @@ var MED_EFFECT_KEY = 25;
 var SETTINGS_TRANSACTION_KEY = 26;
 var SETTINGS_ACK_KEY = 27;
 var LANGUAGE_KEY = 28;
+var MED_INTERVAL_HOURS_KEY = 29;
 var SHOW_JAPANESE_PATTERN_KEY = 30;
+var MED_INTERVAL_START_HOUR_KEY = 31;
+var MED_INTERVAL_START_MINUTE_KEY = 32;
 
 
 var COMMAND_RESET = 0;
@@ -63,6 +66,9 @@ var DEFAULT_DAYPARTS = {
 var DEFAULT_AUDIO_VOLUME = 100;
 var REMINDER_INTERVALS = [1, 5, 10, 15, 20, 30, 60];
 var DEFAULT_REMINDER_INTERVAL = 15;
+var MEDICATION_INTERVAL_HOURS = [2, 3, 4, 6, 8, 12];
+var DEFAULT_MEDICATION_INTERVAL_HOURS = 4;
+var DEFAULT_MEDICATION_INTERVAL_START = 8 * 60;
 
 var DEFAULT_MEDICATION = {
   name: 'Xarelto',
@@ -79,7 +85,9 @@ var DEFAULT_MEDICATION = {
   size: 100,
   imprint: '20',
   iconSet: true,
-  enabled: true
+  enabled: true,
+  intervalHours: DEFAULT_MEDICATION_INTERVAL_HOURS,
+  intervalStart: DEFAULT_MEDICATION_INTERVAL_START
 };
 
 function currentTheme() {
@@ -350,7 +358,9 @@ function cloneDefaultMedication() {
     size: DEFAULT_MEDICATION.size,
     imprint: DEFAULT_MEDICATION.imprint,
     iconSet: true,
-    enabled: DEFAULT_MEDICATION.enabled
+    enabled: DEFAULT_MEDICATION.enabled,
+    intervalHours: DEFAULT_MEDICATION.intervalHours,
+    intervalStart: DEFAULT_MEDICATION.intervalStart
   };
 }
 
@@ -370,7 +380,9 @@ function blankMedication() {
     size: 100,
     imprint: '',
     iconSet: false,
-    enabled: false
+    enabled: false,
+    intervalHours: DEFAULT_MEDICATION_INTERVAL_HOURS,
+    intervalStart: DEFAULT_MEDICATION_INTERVAL_START
   };
 }
 
@@ -399,6 +411,10 @@ function truncateUtf8(value, maximumBytes) {
   }
 
   return value;
+}
+
+function medicationIntervalHoursValid(value) {
+  return MEDICATION_INTERVAL_HOURS.indexOf(value) >= 0;
 }
 
 function normalizeMedication(value) {
@@ -432,9 +448,22 @@ function normalizeMedication(value) {
     ? value.quantity
     : DEFAULT_MEDICATION.quantity;
 
-  var time = integerInRange(value.time, 0, 3)
+  var time = integerInRange(value.time, 0, 4)
     ? value.time
     : DEFAULT_MEDICATION.time;
+
+  var intervalHours =
+      medicationIntervalHoursValid(value.intervalHours)
+          ? value.intervalHours
+          : DEFAULT_MEDICATION_INTERVAL_HOURS;
+
+  var intervalStart = integerInRange(
+    value.intervalStart,
+    0,
+    MINUTES_PER_DAY - 1
+  )
+    ? value.intervalStart
+    : DEFAULT_MEDICATION_INTERVAL_START;
 
   var schedule = integerInRange(value.schedule, 0, 2)
     ? value.schedule
@@ -442,7 +471,9 @@ function normalizeMedication(value) {
 
   var day = 0;
 
-  if (schedule === 1) {
+  if (time === 4) {
+    schedule = 0;
+  } else if (schedule === 1) {
     day = integerInRange(value.day, 0, 6)
       ? value.day
       : 0;
@@ -552,7 +583,9 @@ function normalizeMedication(value) {
     size: size,
     imprint: imprint,
     iconSet: iconSet,
-    enabled: value.enabled !== false && iconSet
+    enabled: value.enabled !== false && iconSet,
+    intervalHours: intervalHours,
+    intervalStart: intervalStart
   };
 }
 
@@ -691,6 +724,11 @@ function sendMedicationAt(
   message[MED_EFFECT_KEY] = medication.effect || '';
   message[MED_QUANTITY_KEY] = medication.quantity;
   message[MED_TIME_KEY] = medication.time;
+  message[MED_INTERVAL_HOURS_KEY] = medication.intervalHours;
+  message[MED_INTERVAL_START_HOUR_KEY] =
+      Math.floor(medication.intervalStart / 60);
+  message[MED_INTERVAL_START_MINUTE_KEY] =
+      medication.intervalStart % 60;
   message[MED_SCHEDULE_KEY] = medication.schedule;
   message[MED_DAY_KEY] = medication.day;
   message[MED_SYMBOL_KEY] = iconSet &&
@@ -1049,7 +1087,7 @@ function configurationPage(
     'var medications=' + initialMedications + ';',
     'var language="' + language + '";',
     'function tr(de,en){return language==="en"?en:de;}',
-    'var translations={"Medikamente":"Medications","Hinzufügen, bearbeiten und deaktivieren":"Add, edit and disable","Tageszeiten":"Dayparts","Früh, Mittag, Abend und Nacht":"Morning, noon, evening and night","Früh beginnt":"Morning starts","Mittag beginnt":"Noon starts","Abend beginnt":"Evening starts","Nacht beginnt":"Night starts","Ton, Vibration und Erinnerung":"Sound, vibration and reminders","Alarmsound":"Alarm sound","Lautstärke":"Volume","Erneut erinnern":"Remind again","Darstellung":"Appearance","Theme, Sprache und Details":"Theme, language and details","Wappen und Hintergrundmuster":"Emblem and background pattern","Schweizer Wappen":"Swiss emblem","Japanisches Muster":"Japanese pattern","Hell":"Light","Dunkel":"Dark","Sprache":"Language","Übertragen":"Save to watch","Noch kein Medikament angelegt.":"No medication added yet.","Neues Medikament":"New medication","Medikament verschieben":"Move medication","Wirkung":"Effect","z. B. Blutverdünner":"e.g. blood thinner","Dosierung":"Dosage","z. B. 20 mg":"e.g. 20 mg","Menge":"Quantity","Zeitpunkt":"Time","Früh":"Morning","Mittag":"Noon","Abend":"Evening","Nacht":"Night","Rhythmus":"Schedule","Täglich":"Daily","Wöchentlich":"Weekly","Monatlich":"Monthly","Wochentag":"Weekday","Montag":"Monday","Dienstag":"Tuesday","Mittwoch":"Wednesday","Donnerstag":"Thursday","Freitag":"Friday","Samstag":"Saturday","Sonntag":"Sunday","Tag im Monat":"Day of month","Art":"Type","Bitte auswählen":"Please select","Tablette":"Tablet","Pen / Spritze":"Pen / syringe","Form":"Shape","Rund":"Round","Pille":"Pill","Kapsel":"Capsule","Rhombus":"Diamond","Grösse":"Size","Beschriftung":"Imprint","z. B. 20":"e.g. 20","Farbe":"Color","Farbe 1":"Color 1","Farbe 2":"Color 2","Pen-Farbe":"Pen color","Akzent":"Accent","Farbpalette öffnen":"Open color palette","Aktiv":"Active","Bitte zuerst ein vollständiges Icon auswählen. Erst danach kann das Medikament aktiviert werden.":"Please select a complete icon first. Only then can the medication be activated.","Medikament löschen":"Delete medication","Medikament kopieren":"Copy medication","Schliessen":"Close"};',
+    'var translations={"Medikamente":"Medications","Hinzufügen, bearbeiten und deaktivieren":"Add, edit and disable","Tageszeiten":"Dayparts","Früh, Mittag, Abend und Nacht":"Morning, noon, evening and night","Früh beginnt":"Morning starts","Mittag beginnt":"Noon starts","Abend beginnt":"Evening starts","Nacht beginnt":"Night starts","Ton, Vibration und Erinnerung":"Sound, vibration and reminders","Alarmsound":"Alarm sound","Lautstärke":"Volume","Erneut erinnern":"Remind again","Darstellung":"Appearance","Theme, Sprache und Details":"Theme, language and details","Wappen und Hintergrundmuster":"Emblem and background pattern","Schweizer Wappen":"Swiss emblem","Japanisches Muster":"Japanese pattern","Hell":"Light","Dunkel":"Dark","Sprache":"Language","Übertragen":"Save to watch","Noch kein Medikament angelegt.":"No medication added yet.","Neues Medikament":"New medication","Medikament verschieben":"Move medication","Wirkung":"Effect","z. B. Blutverdünner":"e.g. blood thinner","Dosierung":"Dosage","z. B. 20 mg":"e.g. 20 mg","Menge":"Quantity","Zeitpunkt":"Time","Früh":"Morning","Mittag":"Noon","Abend":"Evening","Nacht":"Night","Intervall":"Interval","Wiederholung":"Repeat","Startzeit":"Start time","Alle 2 Stunden":"Every 2 hours","Alle 3 Stunden":"Every 3 hours","Alle 4 Stunden":"Every 4 hours","Alle 6 Stunden":"Every 6 hours","Alle 8 Stunden":"Every 8 hours","Alle 12 Stunden":"Every 12 hours","Rhythmus":"Schedule","Täglich":"Daily","Wöchentlich":"Weekly","Monatlich":"Monthly","Wochentag":"Weekday","Montag":"Monday","Dienstag":"Tuesday","Mittwoch":"Wednesday","Donnerstag":"Thursday","Freitag":"Friday","Samstag":"Saturday","Sonntag":"Sunday","Tag im Monat":"Day of month","Art":"Type","Bitte auswählen":"Please select","Tablette":"Tablet","Pen / Spritze":"Pen / syringe","Form":"Shape","Rund":"Round","Pille":"Pill","Kapsel":"Capsule","Rhombus":"Diamond","Grösse":"Size","Beschriftung":"Imprint","z. B. 20":"e.g. 20","Farbe":"Color","Farbe 1":"Color 1","Farbe 2":"Color 2","Pen-Farbe":"Pen color","Akzent":"Accent","Farbpalette öffnen":"Open color palette","Aktiv":"Active","Bitte zuerst ein vollständiges Icon auswählen. Erst danach kann das Medikament aktiviert werden.":"Please select a complete icon first. Only then can the medication be activated.","Medikament löschen":"Delete medication","Medikament kopieren":"Copy medication","Schliessen":"Close"};',
     'function translateNode(node){',
     'if(language!=="en"||!node){return;}',
     'if(node.nodeType===3){var raw=node.nodeValue;var trimmed=raw.replace(/^\\s+|\\s+$/g,"");if(translations[trimmed]){node.nodeValue=raw.replace(trimmed,translations[trimmed]);}return;}',
@@ -1059,7 +1097,7 @@ function configurationPage(
     'for(var childIndex=0;childIndex<node.childNodes.length;childIndex++){translateNode(node.childNodes[childIndex]);}',
     '}',
     'function translatePage(){translateNode(document.body);}',
-    'var timeNames=language==="en"?["Morning","Noon","Evening","Night"]:["Früh","Mittag","Abend","Nacht"];',
+    'var timeNames=language==="en"?["Morning","Noon","Evening","Night","Interval"]:["Früh","Mittag","Abend","Nacht","Intervall"];',
     'var reminderIntervals=[1,5,10,15,20,30,60];',
     'function escapeHtml(value){',
     'return String(value).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");',
@@ -1068,7 +1106,7 @@ function configurationPage(
     'return "<option value=\\""+value+"\\""+(value===current?" selected":"")+">"+label+"</option>";',
     '}',
     'function blankMedication(){',
-    'return {name:"",dosage:"",effect:"",quantity:1,time:0,schedule:0,day:0,symbol:-1,shape:-1,color:-1,color2:-1,size:100,imprint:"",iconSet:false,enabled:false};',
+    'return {name:"",dosage:"",effect:"",quantity:1,time:0,schedule:0,day:0,symbol:-1,shape:-1,color:-1,color2:-1,size:100,imprint:"",iconSet:false,enabled:false,intervalHours:4,intervalStart:480};',
     '}',
     'function numberValue(card,name){',
     'return parseInt(card.querySelector("[data-field=\\""+name+"\\"]").value,10);',
@@ -1080,8 +1118,12 @@ function configurationPage(
     'var card=cards[i];',
     'var dosage=card.querySelector("[data-field=\\"dosage\\"]").value.trim().slice(0,20);',
     'var effect=card.querySelector("[data-field=\\"effect\\"]").value.trim().slice(0,31);',
-    'var schedule=numberValue(card,"schedule");',
-    'var day=schedule===1?numberValue(card,"weekday"):(schedule===2?numberValue(card,"monthday"):0);',
+    'var time=numberValue(card,"time");',
+    'var schedule=time===4?0:numberValue(card,"schedule");',
+    'var day=time===4?0:(schedule===1?numberValue(card,"weekday"):(schedule===2?numberValue(card,"monthday"):0));',
+    'var intervalHours=numberValue(card,"intervalHours");',
+    'var intervalStart=window.__timeToMinutes(card.querySelector("[data-field=intervalStart]").value);',
+    'if(intervalStart<0){intervalStart=480;}',
     'var symbol=numberValue(card,"symbol");',
     'var shape=numberValue(card,"shape");',
     'var color=numberValue(card,"color");',
@@ -1095,7 +1137,7 @@ function configurationPage(
     'dosage:dosage,',
     'effect:effect,',
     'quantity:numberValue(card,"quantity"),',
-    'time:numberValue(card,"time"),',
+    'time:time,',
     'schedule:schedule,',
     'day:day,',
     'symbol:symbol,',
@@ -1105,15 +1147,22 @@ function configurationPage(
     'size:size,',
     'imprint:imprint,',
     'iconSet:iconSet,',
-    'enabled:enabled',
+    'enabled:enabled,',
+    'intervalHours:intervalHours,',
+    'intervalStart:intervalStart',
     '});',
     '}',
     'return result;',
     '}',
     'function updateDayFields(card){',
+    'var time=numberValue(card,"time");',
+    'var interval=time===4;',
     'var schedule=numberValue(card,"schedule");',
-    'card.querySelector(".weekday").className=schedule===1?"weekday":"weekday hidden";',
-    'card.querySelector(".monthday").className=schedule===2?"monthday":"monthday hidden";',
+    'card.querySelector(".schedule-field").className=interval?"schedule-field hidden":"schedule-field";',
+    'card.querySelector(".interval-hours").className=interval?"interval-hours":"interval-hours hidden";',
+    'card.querySelector(".interval-start").className=interval?"interval-start":"interval-start hidden";',
+    'card.querySelector(".weekday").className=!interval&&schedule===1?"weekday":"weekday hidden";',
+    'card.querySelector(".monthday").className=!interval&&schedule===2?"monthday":"monthday hidden";',
     '}',
     'function pebbleColorHex(value){',
     'var red=((value>>4)&3)*85;',
@@ -1319,7 +1368,8 @@ function configurationPage(
     '}else{summaryStyle="background-color:"+pebbleColorHex(med.color);}',
     'summaryIcon="<span class=\\"summary-icon summary-shape-"+med.shape+"\\" style=\\""+summaryStyle+"\\"></span>";',
     '}else if(med.symbol===1){summaryIcon="<span class=\\"summary-icon summary-pen\\"></span>";}',
-    'var sub=timeNames[med.time]+(dosage?" · "+dosage:"")+(effect?" · "+effect:"")+(med.quantity>1?" · x"+med.quantity:"")+(med.enabled?"":" · "+tr("aus","off"));',
+    'var timeSummary=med.time===4?timeNames[4]+" · "+med.intervalHours+" h":timeNames[med.time];',
+    'var sub=timeSummary+(dosage?" · "+dosage:"")+(effect?" · "+effect:"")+(med.quantity>1?" · x"+med.quantity:"")+(med.enabled?"":" · "+tr("aus","off"));',
     'html+="<section class=\\"card\\" data-index=\\""+i+"\\">";',
     'html+="<div class=\\"card-header\\">";',
     'html+="<button class=\\"drag-handle\\" type=\\"button\\" data-drag=\\""+i+"\\" aria-label=\\"Medikament verschieben\\"><span></span><span></span><span></span></button>";',
@@ -1331,11 +1381,15 @@ function configurationPage(
     'html+="<label>Dosierung<input data-field=\\"dosage\\" type=\\"text\\" maxlength=\\"20\\" value=\\""+escapeHtml(dosage)+"\\" placeholder=\\"z. B. 20 mg\\"></label>";',
     'html+="<label>Menge<input data-field=\\"quantity\\" type=\\"number\\" min=\\"1\\" max=\\"20\\" required value=\\""+med.quantity+"\\"></label>";',
     'html+="<label>Zeitpunkt<select data-field=\\"time\\">";',
-    'html+=option(0,"Früh",med.time)+option(1,"Mittag",med.time)+option(2,"Abend",med.time)+option(3,"Nacht",med.time);',
+    'html+=option(0,"Früh",med.time)+option(1,"Mittag",med.time)+option(2,"Abend",med.time)+option(3,"Nacht",med.time)+option(4,"Intervall",med.time);',
     'html+="</select></label>";',
-    'html+="<label>Rhythmus<select data-field=\\"schedule\\">";',
+    'html+="<label class=schedule-field>Rhythmus<select data-field=schedule>";',
     'html+=option(0,"Täglich",med.schedule)+option(1,"Wöchentlich",med.schedule)+option(2,"Monatlich",med.schedule);',
     'html+="</select></label>";',
+    'html+="<label class=interval-hours>Wiederholung<select data-field=intervalHours>";',
+    'html+=option(2,"Alle 2 Stunden",med.intervalHours)+option(3,"Alle 3 Stunden",med.intervalHours)+option(4,"Alle 4 Stunden",med.intervalHours)+option(6,"Alle 6 Stunden",med.intervalHours)+option(8,"Alle 8 Stunden",med.intervalHours)+option(12,"Alle 12 Stunden",med.intervalHours);',
+    'html+="</select></label>";',
+    'html+="<label class=interval-start>Startzeit<input data-field=intervalStart type=time required value="+window.__minutesToTime(med.intervalStart)+"></label>";',
     'html+="<label class=\\"weekday\\">Wochentag<select data-field=\\"weekday\\">";',
     'html+=option(0,"Montag",med.day)+option(1,"Dienstag",med.day)+option(2,"Mittwoch",med.day)+option(3,"Donnerstag",med.day)+option(4,"Freitag",med.day)+option(5,"Samstag",med.day)+option(6,"Sonntag",med.day);',
     'html+="</select></label>";',
@@ -1375,6 +1429,7 @@ function configurationPage(
     'var card=cards[c];',
     'updateDayFields(card);',
     'updateIconFields(card);',
+    'card.querySelector("[data-field=time]").onchange=(function(item){return function(){updateDayFields(item);};})(card);',
     'card.querySelector("[data-field=\\"schedule\\"]").onchange=(function(item){return function(){updateDayFields(item);};})(card);',
     'card.querySelector("[data-field=\\"symbol\\"]").onchange=(function(item){return function(){updateIconFields(item);};})(card);',
     'card.querySelector("[data-field=\\"shape\\"]").onchange=(function(item){return function(){updateIconFields(item);};})(card);',
@@ -1487,6 +1542,7 @@ function configurationPage(
     'document.location="pebblejs://close#"+encodeURIComponent(JSON.stringify(result));',
     '};',
     'window.__timeToMinutes=' + timeToMinutes.toString() + ';',
+    'window.__minutesToTime=' + minutesToTime.toString() + ';',
     'render(-1);',
     '</script>',
     '</body>',

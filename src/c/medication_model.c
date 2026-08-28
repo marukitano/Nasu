@@ -16,14 +16,11 @@
 static MedicationTime medication_time_for_minute(
     int minute
 );
-static bool medication_group_is_confirmed(
-    MedicationSymbol symbol
-);
 static bool medication_name_is_listed(
     const char *name
 );
 static bool medication_matches_group(
-    const MedicationSettings *medication,
+    uint8_t medication_index,
     time_t timestamp,
     MedicationSymbol symbol
 );
@@ -31,6 +28,123 @@ void daypart_tick_handler(
     struct tm *tick_time,
     TimeUnits units_changed
 );
+
+bool medication_interval_hours_valid(int value) {
+  switch (value) {
+    case 2:
+    case 3:
+    case 4:
+    case 6:
+    case 8:
+    case 12:
+      return true;
+
+    default:
+      return false;
+  }
+}
+
+bool medication_interval_window_at(
+    uint8_t medication_index,
+    time_t timestamp,
+    time_t *window_start,
+    time_t *window_end
+) {
+  if (medication_index >= s_medication_count) {
+    return false;
+  }
+
+  const MedicationSettings *medication =
+      &s_medications[medication_index];
+  const MedicationIntervalSettings *interval =
+      medication_interval_settings_at(
+        medication_index
+      );
+
+  if (
+    !medication->enabled ||
+    medication->time != MEDICATION_TIME_INTERVAL ||
+    medication->schedule != MEDICATION_SCHEDULE_DAILY ||
+    !interval ||
+    !medication_interval_hours_valid(interval->hours) ||
+    interval->start_hour > 23 ||
+    interval->start_minute > 59
+  ) {
+    return false;
+  }
+
+  struct tm *local_ptr = localtime(&timestamp);
+
+  if (!local_ptr) {
+    return false;
+  }
+
+  const struct tm local = *local_ptr;
+  const int interval_minutes =
+      interval->hours * 60;
+  const int configured_start_minute =
+      interval->start_hour * 60 +
+      interval->start_minute;
+
+  /*
+   * The configured start defines the clock phase, not a confirmation-based
+   * delay. Example 07:00 / 4 h stays 07,11,15,19,23,03 even when 11:00 is
+   * confirmed late.
+   */
+  const int phase_minute =
+      configured_start_minute % interval_minutes;
+  const int current_minute =
+      local.tm_hour * 60 + local.tm_min;
+
+  int delta =
+      (current_minute - phase_minute) %
+      interval_minutes;
+
+  if (delta < 0) {
+    delta += interval_minutes;
+  }
+
+  int occurrence_minute =
+      current_minute - delta;
+  int day_offset = 0;
+
+  if (occurrence_minute < 0) {
+    occurrence_minute += DAYPART_MINUTES_PER_DAY;
+    day_offset = -1;
+  }
+
+  struct tm start_tm = local;
+  start_tm.tm_mday += day_offset;
+  start_tm.tm_hour = occurrence_minute / 60;
+  start_tm.tm_min = occurrence_minute % 60;
+  start_tm.tm_sec = 0;
+  start_tm.tm_isdst = -1;
+
+  struct tm end_tm = start_tm;
+  end_tm.tm_min += interval_minutes;
+  end_tm.tm_isdst = -1;
+
+  const time_t start = mktime(&start_tm);
+  const time_t end = mktime(&end_tm);
+
+  if (
+    start <= 0 ||
+    end <= start ||
+    timestamp < start ||
+    timestamp >= end
+  ) {
+    return false;
+  }
+
+  if (window_start) {
+    *window_start = start;
+  }
+  if (window_end) {
+    *window_end = end;
+  }
+
+  return true;
+}
 
 static MedicationTime medication_time_for_minute(
     int minute
@@ -105,6 +219,28 @@ bool medication_is_due_at(
     time_t timestamp
 ) {
   if (!medication || !medication->enabled) {
+    return false;
+  }
+
+  if (
+    medication->time ==
+        MEDICATION_TIME_INTERVAL
+  ) {
+    for (
+      uint8_t index = 0;
+      index < s_medication_count;
+      index++
+    ) {
+      if (medication == &s_medications[index]) {
+        return medication_interval_window_at(
+          index,
+          timestamp,
+          NULL,
+          NULL
+        );
+      }
+    }
+
     return false;
   }
 
@@ -236,15 +372,6 @@ void reset_medication_confirmations(void) {
        (1u << MEDICATION_SYMBOL_PEN)) != 0;
 }
 
-static bool medication_group_is_confirmed(
-    MedicationSymbol symbol
-) {
-  return
-      symbol == MEDICATION_SYMBOL_PILL
-          ? s_pills_confirmed
-          : s_pen_confirmed;
-}
-
 static bool medication_name_is_listed(
     const char *name
 ) {
@@ -287,16 +414,22 @@ void mark_medication_group_confirmed(
 }
 
 static bool medication_matches_group(
-    const MedicationSettings *medication,
+    uint8_t medication_index,
     time_t timestamp,
     MedicationSymbol symbol
 ) {
+  if (medication_index >= s_medication_count) {
+    return false;
+  }
+
+  const MedicationSettings *medication =
+      &s_medications[medication_index];
+
   return
-      medication &&
       medication->symbol ==
           (uint8_t)symbol &&
-      medication_is_due_at(
-        medication,
+      alarm_medication_is_unconfirmed_due_at(
+        medication_index,
         timestamp
       );
 }
@@ -304,29 +437,13 @@ static bool medication_matches_group(
 bool medication_group_is_due(
     MedicationSymbol symbol
 ) {
-  if (medication_group_is_confirmed(symbol)) {
-    return false;
-  }
+  const uint8_t symbol_mask =
+      (uint8_t)(1u << symbol);
 
-  const time_t now = time(NULL);
-
-  for (
-    uint8_t index = 0;
-    index < s_medication_count;
-    index++
-  ) {
-    if (
-      medication_matches_group(
-        &s_medications[index],
-        now,
-        symbol
-      )
-    ) {
-      return true;
-    }
-  }
-
-  return false;
+  return
+      (alarm_unconfirmed_symbol_mask_at(
+        time(NULL)
+      ) & symbol_mask) != 0;
 }
 
 bool active_medication_symbol(
@@ -394,7 +511,7 @@ void rebuild_medication_rows(void) {
   ) {
     if (
       !medication_matches_group(
-        &s_medications[index],
+        index,
         now,
         symbol
       )
