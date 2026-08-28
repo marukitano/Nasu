@@ -107,7 +107,11 @@ static time_t next_due_window_start_after(
     time_t now,
     uint16_t *medication_mask
 );
-static time_t next_interval_alarm_timestamp_after(
+static time_t next_interval_occurrence_timestamp_after(
+    time_t now,
+    uint16_t *medication_mask
+);
+static time_t next_open_reminder_timestamp_after(
     time_t now,
     uint16_t *medication_mask
 );
@@ -1397,7 +1401,7 @@ static time_t next_reminder_timestamp_for_state(
           : 0;
 }
 
-static time_t next_interval_alarm_timestamp_after(
+static time_t next_interval_occurrence_timestamp_after(
     time_t now,
     uint16_t *medication_mask
 ) {
@@ -1449,20 +1453,37 @@ static time_t next_interval_alarm_timestamp_after(
         best_mask |= bit;
       }
     }
+  }
 
-    /*
-     * Reminder state is relevant only inside the CURRENT occurrence.
-     * It may add an earlier candidate, but it cannot remove/change the
-     * next fixed occurrence above.
-     */
-    IntervalMedicationAlarmState *state = NULL;
+  if (medication_mask) {
+    *medication_mask = best_mask;
+  }
+
+  return best;
+}
+
+static time_t next_open_reminder_timestamp_after(
+    time_t now,
+    uint16_t *medication_mask
+) {
+  time_t best = 0;
+  uint16_t best_mask = 0;
+
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    time_t occurrence_start = 0;
+    time_t occurrence_end = 0;
+    MedicationAlarmState *state = NULL;
 
     if (
-      !interval_alarm_state_at(
+      !medication_alarm_state_at(
         index,
         now,
-        NULL,
-        NULL,
+        &occurrence_start,
+        &occurrence_end,
         &state
       ) ||
       !state
@@ -1470,7 +1491,7 @@ static time_t next_interval_alarm_timestamp_after(
       continue;
     }
 
-    const time_t reminder_candidate =
+    const time_t candidate =
         next_reminder_timestamp_for_state(
           now,
           occurrence_start,
@@ -1478,16 +1499,21 @@ static time_t next_interval_alarm_timestamp_after(
           state
         );
 
-    if (reminder_candidate > 0) {
-      if (
-        best == 0 ||
-        reminder_candidate < best
-      ) {
-        best = reminder_candidate;
-        best_mask = bit;
-      } else if (reminder_candidate == best) {
-        best_mask |= bit;
-      }
+    if (candidate <= 0) {
+      continue;
+    }
+
+    const uint16_t bit =
+        (uint16_t)(1u << index);
+
+    if (
+      best == 0 ||
+      candidate < best
+    ) {
+      best = candidate;
+      best_mask = bit;
+    } else if (candidate == best) {
+      best_mask |= bit;
     }
   }
 
@@ -1509,62 +1535,9 @@ static time_t next_alarm_timestamp_after(
         &best_mask
       );
 
-  for (
-    uint8_t index = 0;
-    index < s_medication_count;
-    index++
-  ) {
-    if (
-      s_medications[index].time ==
-          MEDICATION_TIME_INTERVAL
-    ) {
-      continue;
-    }
-
-    time_t occurrence_start = 0;
-    time_t occurrence_end = 0;
-    RegularMedicationAlarmState *state = NULL;
-
-    if (
-      !regular_alarm_state_at(
-        index,
-        now,
-        &occurrence_start,
-        &occurrence_end,
-        &state
-      ) ||
-      !state
-    ) {
-      continue;
-    }
-
-    const time_t candidate =
-        next_reminder_timestamp_for_state(
-          now,
-          occurrence_start,
-          occurrence_end,
-          state
-        );
-
-    if (candidate > 0) {
-      const uint16_t bit =
-          (uint16_t)(1u << index);
-
-      if (
-        best == 0 ||
-        candidate < best
-      ) {
-        best = candidate;
-        best_mask = bit;
-      } else if (candidate == best) {
-        best_mask |= bit;
-      }
-    }
-  }
-
   uint16_t interval_mask = 0;
   const time_t interval_candidate =
-      next_interval_alarm_timestamp_after(
+      next_interval_occurrence_timestamp_after(
         now,
         &interval_mask
       );
@@ -1578,6 +1551,25 @@ static time_t next_alarm_timestamp_after(
       best_mask = interval_mask;
     } else if (interval_candidate == best) {
       best_mask |= interval_mask;
+    }
+  }
+
+  uint16_t reminder_mask = 0;
+  const time_t reminder_candidate =
+      next_open_reminder_timestamp_after(
+        now,
+        &reminder_mask
+      );
+
+  if (reminder_candidate > now) {
+    if (
+      best == 0 ||
+      reminder_candidate < best
+    ) {
+      best = reminder_candidate;
+      best_mask = reminder_mask;
+    } else if (reminder_candidate == best) {
+      best_mask |= reminder_mask;
     }
   }
 
