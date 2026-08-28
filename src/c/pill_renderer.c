@@ -866,7 +866,7 @@ void draw_pen_alert_animation(
     ctx,
     GPoint(
       bounds.origin.x + bounds.size.w / 2,
-      center_y - 3
+      center_y + 7
     ),
     angle,
     62,
@@ -878,7 +878,36 @@ void draw_pen_alert_animation(
     body_outline
   );
 
-  (void)outline_color;
+  /*
+   * Beim Pen ist der obere Bereich des Alarm-Screens frei.
+   * Den Medikamentennamen dort direkt zeigen, damit er schon vor dem
+   * Herunterscrollen zu den Einnahmedetails eindeutig erkennbar ist.
+   *
+   * scroll_offset_y koppelt den Namen an dieselbe Alarmseite wie den Pen.
+   */
+  graphics_context_set_text_color(
+    ctx,
+    outline_color
+  );
+
+  graphics_draw_text(
+    ctx,
+    pen->name,
+    fonts_get_system_font(
+      FONT_KEY_GOTHIC_28_BOLD
+    ),
+    GRect(
+      bounds.origin.x + 8,
+      bounds.origin.y +
+          scroll_offset_y +
+          4,
+      bounds.size.w - 16,
+      MEDICATION_NAME_LINE_HEIGHT
+    ),
+    GTextOverflowModeTrailingEllipsis,
+    GTextAlignmentCenter,
+    NULL
+  );
 }
 
 static void draw_medication_icon(
