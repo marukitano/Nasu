@@ -598,9 +598,12 @@ static void draw_vespa_next_alarm_bubble(
 
   const char *bubble_text = NULL;
   GFont bubble_font = fonts_get_system_font(
-    FONT_KEY_GOTHIC_18_BOLD
+    intake_locked
+        ? FONT_KEY_GOTHIC_18_BOLD
+        : FONT_KEY_GOTHIC_24_BOLD
   );
   char vertical_time_text[16];
+  char time_text[8];
 
   if (intake_locked) {
     if (s_nurse_japanese_font) {
@@ -629,7 +632,6 @@ static void draw_vespa_next_alarm_bubble(
     }
 
     const struct tm local = *local_ptr;
-    char time_text[8];
 
     snprintf(
       time_text,
@@ -694,6 +696,67 @@ static void draw_vespa_next_alarm_bubble(
     bubble_rect.size.h - 4
   );
 
+  graphics_context_set_text_color(
+    ctx,
+    GColorBlack
+  );
+
+  if (!intake_locked) {
+    const GSize glyph_size =
+        graphics_text_layout_get_content_size(
+          "0",
+          bubble_font,
+          content_rect,
+          GTextOverflowModeTrailingEllipsis,
+          GTextAlignmentCenter
+        );
+
+    const int16_t glyph_height =
+        glyph_size.h > 0
+            ? glyph_size.h
+            : 24;
+    int16_t line_step =
+        (content_rect.size.h - 6) / 5;
+
+    if (line_step > glyph_height - 3) {
+      line_step = glyph_height - 3;
+    }
+
+    if (line_step < 16) {
+      line_step = 16;
+    }
+
+    const int16_t total_height =
+        line_step * 5;
+    int16_t start_y =
+        content_rect.origin.y +
+        (content_rect.size.h - total_height) / 2 - 6;
+
+    for (uint8_t i = 0; i < 5; i++) {
+      char glyph_text[2] = {
+        time_text[i],
+        '\0'
+      };
+
+      graphics_draw_text(
+        ctx,
+        glyph_text,
+        bubble_font,
+        GRect(
+          content_rect.origin.x,
+          start_y + (int16_t)(i * line_step),
+          content_rect.size.w,
+          glyph_height
+        ),
+        GTextOverflowModeTrailingEllipsis,
+        GTextAlignmentCenter,
+        NULL
+      );
+    }
+
+    return;
+  }
+
   const GSize text_size =
       graphics_text_layout_get_content_size(
         bubble_text,
@@ -708,19 +771,10 @@ static void draw_vespa_next_alarm_bubble(
           ? text_size.h
           : content_rect.size.h;
 
-  int16_t centered_y =
+  const int16_t centered_y =
       content_rect.origin.y +
       (content_rect.size.h - centered_height) / 2;
 
-  /* Only the vertical time needs extra optical correction. */
-  if (!intake_locked) {
-    centered_y -= 5;
-  }
-
-  graphics_context_set_text_color(
-    ctx,
-    GColorBlack
-  );
   graphics_draw_text(
     ctx,
     bubble_text,
