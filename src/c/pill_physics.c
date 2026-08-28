@@ -54,7 +54,7 @@ static uint8_t s_pill_physics_quiet_frames;
 static uint8_t s_pill_physics_sensor_quiet_samples;
 
 static bool pill_physics_medication_is_visible(
-    const MedicationSettings *medication
+    uint8_t medication_index
 );
 static int32_t pill_rb_clamp_angle(int32_t angle);
 static int32_t pill_rb_clamp_int32(
@@ -220,17 +220,22 @@ static void pill_physics_accel_handler(
 );
 
 static bool pill_physics_medication_is_visible(
-    const MedicationSettings *medication
+    uint8_t medication_index
 ) {
+  if (medication_index >= s_medication_count) {
+    return false;
+  }
+
+  const MedicationSettings *medication =
+      &s_medications[medication_index];
+
   return
-      medication &&
       medication->icon_set &&
       medication->symbol == MEDICATION_SYMBOL_PILL &&
-      medication_is_due_at(
-        medication,
+      alarm_medication_is_unconfirmed_due_at(
+        medication_index,
         time(NULL)
-      ) &&
-      !s_pills_confirmed;
+      );
 }
 
 static int32_t pill_rb_clamp_angle(int32_t angle) {
@@ -924,7 +929,7 @@ void pill_physics_rebuild(void) {
     const MedicationSettings *medication =
         &s_medications[index];
 
-    if (!pill_physics_medication_is_visible(medication)) {
+    if (!pill_physics_medication_is_visible(index)) {
       continue;
     }
 
