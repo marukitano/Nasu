@@ -1607,48 +1607,11 @@ static void record_alarm_reminder_at(
   }
 }
 
-static void alarm_start_for_request(
+static void alarm_start_due_event_at(
+    time_t now,
+    uint16_t due_medication_mask,
     uint16_t requested_mask
 ) {
-  if (s_alarm_active) {
-    return;
-  }
-
-  if (s_transfer_screen_active) {
-    schedule_next_alarm_wakeup();
-    return;
-  }
-
-  const time_t now = time(NULL);
-  uint16_t due_medication_mask = 0;
-
-  if (requested_mask != 0) {
-    for (
-      uint8_t index = 0;
-      index < s_medication_count;
-      index++
-    ) {
-      const uint16_t bit =
-          (uint16_t)(1u << index);
-
-      if (
-        (
-          requested_mask &
-          bit
-        ) != 0 &&
-        alarm_medication_is_unconfirmed_due_at(
-          index,
-          now
-        )
-      ) {
-        due_medication_mask |= bit;
-      }
-    }
-  } else {
-    due_medication_mask =
-        alarm_event_medication_mask_at(now);
-  }
-
   if (due_medication_mask == 0) {
     refresh_app_screen_state();
     schedule_next_alarm_wakeup();
@@ -1688,6 +1651,38 @@ static void alarm_start_for_request(
   if (!s_alarm_intro_timer) {
     alarm_intro_timer_handler(NULL);
   }
+}
+
+static void alarm_start_for_request(
+    uint16_t requested_mask
+) {
+  if (s_alarm_active) {
+    return;
+  }
+
+  if (s_transfer_screen_active) {
+    schedule_next_alarm_wakeup();
+    return;
+  }
+
+  const time_t now = time(NULL);
+  uint16_t due_medication_mask =
+      alarm_event_medication_mask_at(now);
+
+  /*
+   * A wakeup cookie is only a snapshot of which medications caused the
+   * scheduled OS event. It may restrict the live event, but it must never
+   * define "due" independently from the alarm core.
+   */
+  if (requested_mask != 0) {
+    due_medication_mask &= requested_mask;
+  }
+
+  alarm_start_due_event_at(
+    now,
+    due_medication_mask,
+    requested_mask
+  );
 }
 
 void alarm_start(void) {
@@ -1734,22 +1729,6 @@ static void alarm_wakeup_handler(
 
 
 
-static bool alarm_reminder_due_at(
-    time_t timestamp
-) {
-  if (
-    s_alarm_active ||
-    s_transfer_screen_active
-  ) {
-    return false;
-  }
-
-  return
-      alarm_event_medication_mask_at(
-        timestamp
-      ) != 0;
-}
-
 void alarm_handle_minute_tick(
     const struct tm *tick_time
 ) {
@@ -1757,22 +1736,28 @@ void alarm_handle_minute_tick(
     return;
   }
 
-  struct tm local_minute = *tick_time;
-  local_minute.tm_sec = 0;
-  local_minute.tm_isdst = -1;
-
-  time_t now = mktime(&local_minute);
-
-  if (now <= 0) {
-    now = time(NULL);
+  if (
+    s_alarm_active ||
+    s_transfer_screen_active
+  ) {
+    schedule_next_alarm_wakeup();
+    return;
   }
 
   /*
-   * Ist Nasu bereits offen, ist der Minuten-Tick der Foreground-Scheduler.
-   * Er muss daher sowohl den ersten Alarm als auch spätere Reminder starten.
+   * Nasu is already open, so the minute tick is the foreground scheduler.
+   * Calculate the live event exactly once and start that same event.
    */
-  if (alarm_reminder_due_at(now)) {
-    alarm_start();
+  const time_t now = time(NULL);
+  const uint16_t due_medication_mask =
+      alarm_event_medication_mask_at(now);
+
+  if (due_medication_mask != 0) {
+    alarm_start_due_event_at(
+      now,
+      due_medication_mask,
+      0
+    );
   }
 
   schedule_next_alarm_wakeup();
