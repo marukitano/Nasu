@@ -2200,13 +2200,16 @@ void alarm_confirmation_received(
     MedicationSymbol symbol
 ) {
   const time_t now = time(NULL);
+
+  /*
+   * Confirm every currently due medication of the selected symbol.
+   * The active alarm mask describes only the reminder event that opened
+   * the alarm UI; it must not hide another already due occurrence.
+   */
   uint16_t target_mask =
-      s_alarm_active &&
-      s_alarm_due_medication_mask != 0
-          ? s_alarm_due_medication_mask
-          : alarm_unconfirmed_medication_mask_at(
-              now
-            );
+      alarm_unconfirmed_medication_mask_at(
+        now
+      );
 
   for (
     uint8_t index = 0;
