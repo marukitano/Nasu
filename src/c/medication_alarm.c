@@ -46,7 +46,6 @@ static RegularMedicationAlarmState
 static bool s_regular_alarm_states_loaded;
 
 static time_t s_alarm_stop_time;
-static uint8_t s_alarm_due_symbol_mask;
 static uint16_t s_alarm_due_medication_mask;
 static uint16_t s_pending_wakeup_medication_mask;
 static AppTimer *s_alarm_pulse_timer;
@@ -97,9 +96,6 @@ static bool regular_alarm_state_at(
 );
 static uint16_t alarm_event_medication_mask_at(
     time_t timestamp
-);
-static uint8_t symbol_mask_for_medication_mask(
-    uint16_t medication_mask
 );
 static uint8_t alarm_unconfirmed_regular_symbol_mask_at(
     time_t timestamp
@@ -1077,34 +1073,6 @@ static uint16_t alarm_event_medication_mask_at(
   return mask;
 }
 
-static uint8_t symbol_mask_for_medication_mask(
-    uint16_t medication_mask
-) {
-  uint8_t symbol_mask = 0;
-
-  for (
-    uint8_t index = 0;
-    index < s_medication_count;
-    index++
-  ) {
-    if (
-      (
-        medication_mask &
-        (uint16_t)(1u << index)
-      ) == 0
-    ) {
-      continue;
-    }
-
-    symbol_mask |=
-        (uint8_t)(
-          1u << s_medications[index].symbol
-        );
-  }
-
-  return symbol_mask;
-}
-
 static void persist_alarm_window_state(void) {
   persist_write_data(
     ALARM_WINDOW_STATE_PERSIST_KEY,
@@ -1711,7 +1679,6 @@ void alarm_stop(void) {
 
   s_alarm_active = false;
   s_alarm_stop_time = 0;
-  s_alarm_due_symbol_mask = 0;
   s_alarm_due_medication_mask = 0;
 }
 
@@ -1910,10 +1877,6 @@ void alarm_start(void) {
 
   s_alarm_due_medication_mask =
       due_medication_mask;
-  s_alarm_due_symbol_mask =
-      symbol_mask_for_medication_mask(
-        due_medication_mask
-      );
 
   APP_LOG(
     APP_LOG_LEVEL_INFO,
@@ -2309,10 +2272,6 @@ void alarm_confirmation_received(
 
   s_alarm_due_medication_mask &=
       (uint16_t)~target_mask;
-  s_alarm_due_symbol_mask =
-      symbol_mask_for_medication_mask(
-        s_alarm_due_medication_mask
-      );
 
   if (
     s_alarm_active &&
