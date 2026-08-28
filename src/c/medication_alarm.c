@@ -90,6 +90,13 @@ static bool regular_alarm_state_at(
     time_t *occurrence_end,
     RegularMedicationAlarmState **state
 );
+static bool medication_alarm_state_at(
+    uint8_t medication_index,
+    time_t timestamp,
+    time_t *occurrence_start,
+    time_t *occurrence_end,
+    MedicationAlarmState **state
+);
 static uint16_t alarm_event_medication_mask_at(
     time_t timestamp
 );
@@ -956,6 +963,39 @@ static bool regular_alarm_state_at(
   return true;
 }
 
+static bool medication_alarm_state_at(
+    uint8_t medication_index,
+    time_t timestamp,
+    time_t *occurrence_start,
+    time_t *occurrence_end,
+    MedicationAlarmState **state
+) {
+  if (medication_index >= s_medication_count) {
+    return false;
+  }
+
+  if (
+    s_medications[medication_index].time ==
+        MEDICATION_TIME_INTERVAL
+  ) {
+    return interval_alarm_state_at(
+      medication_index,
+      timestamp,
+      occurrence_start,
+      occurrence_end,
+      state
+    );
+  }
+
+  return regular_alarm_state_at(
+    medication_index,
+    timestamp,
+    occurrence_start,
+    occurrence_end,
+    state
+  );
+}
+
 static uint16_t alarm_unconfirmed_medication_mask_at(
     time_t timestamp
 ) {
@@ -1163,35 +1203,10 @@ bool alarm_medication_is_unconfirmed_due_at(
     uint8_t medication_index,
     time_t timestamp
 ) {
-  if (medication_index >= s_medication_count) {
-    return false;
-  }
-
-  const MedicationSettings *medication =
-      &s_medications[medication_index];
-
-  if (
-    medication->time ==
-        MEDICATION_TIME_INTERVAL
-  ) {
-    IntervalMedicationAlarmState *state = NULL;
-
-    return
-        interval_alarm_state_at(
-          medication_index,
-          timestamp,
-          NULL,
-          NULL,
-          &state
-        ) &&
-        state &&
-        !state->confirmed;
-  }
-
-  RegularMedicationAlarmState *state = NULL;
+  MedicationAlarmState *state = NULL;
 
   return
-      regular_alarm_state_at(
+      medication_alarm_state_at(
         medication_index,
         timestamp,
         NULL,
