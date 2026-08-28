@@ -362,16 +362,6 @@ MedicationTime current_medication_time(void) {
   );
 }
 
-void reset_medication_confirmations(void) {
-  alarm_refresh_window_state();
-  s_pills_confirmed =
-      (s_alarm_window_state.confirmed_mask &
-       (1u << MEDICATION_SYMBOL_PILL)) != 0;
-  s_pen_confirmed =
-      (s_alarm_window_state.confirmed_mask &
-       (1u << MEDICATION_SYMBOL_PEN)) != 0;
-}
-
 static bool medication_name_is_listed(
     const char *name
 ) {
@@ -400,17 +390,6 @@ static bool medication_name_is_listed(
   }
 
   return false;
-}
-
-void mark_medication_group_confirmed(
-    MedicationSymbol symbol
-) {
-  if (symbol == MEDICATION_SYMBOL_PILL) {
-    s_pills_confirmed = true;
-    return;
-  }
-
-  s_pen_confirmed = true;
 }
 
 static bool medication_matches_group(

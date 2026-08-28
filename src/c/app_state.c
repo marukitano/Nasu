@@ -14,8 +14,6 @@ bool s_intake_symbol_set;
 
 MedicationTime s_visible_medication_time;
 bool s_visible_medication_time_set;
-bool s_pills_confirmed;
-bool s_pen_confirmed;
 
 Window *s_window;
 Layer *s_canvas_layer;

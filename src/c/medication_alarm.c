@@ -1980,9 +1980,6 @@ bool alarm_reset_after_settings_save(void) {
   };
   s_alarm_window_state_loaded = true;
 
-  s_pills_confirmed = false;
-  s_pen_confirmed = false;
-
   const int bytes_written = persist_write_data(
     ALARM_WINDOW_STATE_PERSIST_KEY,
     &s_alarm_window_state,

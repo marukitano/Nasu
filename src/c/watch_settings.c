@@ -1548,7 +1548,6 @@ static bool load_current_medication_list(void) {
   s_medication_count =
       (uint8_t)stored_count;
 
-  reset_medication_confirmations();
   rebuild_medication_rows();
 
   if (

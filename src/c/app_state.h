@@ -16,8 +16,6 @@ extern bool s_intake_symbol_set;
 
 extern MedicationTime s_visible_medication_time;
 extern bool s_visible_medication_time_set;
-extern bool s_pills_confirmed;
-extern bool s_pen_confirmed;
 #define LIST_ROW_COUNT ((int)s_list_row_count)
 #define INTAKE_ROW_COUNT ((int)s_intake_row_count)
 

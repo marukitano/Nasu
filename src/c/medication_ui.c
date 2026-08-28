@@ -1301,7 +1301,6 @@ void refresh_app_screen_state(void) {
 
   invalidate_vespa_next_alarm_cache();
   cancel_timer(&s_alarm_screen_timer);
-  reset_medication_confirmations();
 
   /*
    * The active vibration/audio event may already be over. The intake lock,

@@ -1408,9 +1408,7 @@ void confirmation_update_proc(
 static void confirm_medication_group(
     MedicationSymbol symbol
 ) {
-  mark_medication_group_confirmed(symbol);
   alarm_confirmation_received(symbol);
-
 }
 
 static void finish_confirmed_release(void) {
