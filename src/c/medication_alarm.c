@@ -654,7 +654,7 @@ static bool medication_interval_occurrences_at(
 
   const struct tm local = *local_ptr;
   const int interval_minutes =
-      interval->hours == 3 ? 3 : interval->hours * 60;
+      interval->hours * 60;
   const int configured_start_minute =
       interval->start_hour * 60 +
       interval->start_minute;

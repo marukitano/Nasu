@@ -1412,7 +1412,10 @@ static void confirm_medication_group(
 }
 
 static void finish_confirmed_release(void) {
-  if (s_confirmation_image_active) {
+  if (
+    s_confirmation_image_active ||
+    alarm_visual_medication_mask() != 0
+  ) {
     reset_confirmation_image();
     s_confirm_radius = 0;
     s_confirmation_state = CONFIRM_IDLE;
@@ -1424,6 +1427,15 @@ static void finish_confirmed_release(void) {
       layer_mark_dirty(s_confirmation_layer);
     }
 
+    /*
+     * A successful medication alarm confirmation must always finish through
+     * the Vespa transition. The confirmation image is presentation state;
+     * it must never decide whether the alarm waits on Vespa or exits
+     * immediately.
+     *
+     * The alarm core keeps the just-confirmed group as a visual snapshot
+     * until Vespa has fully settled, which makes this test deterministic.
+     */
     medication_ui_return_to_vespa_after_confirmation();
     return;
   }
