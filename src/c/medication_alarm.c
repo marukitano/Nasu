@@ -39,6 +39,7 @@ static bool s_medication_alarm_states_loaded;
 
 static time_t s_alarm_stop_time;
 static uint16_t s_alarm_due_medication_mask;
+static uint16_t s_confirmation_visual_medication_mask;
 static uint16_t s_launch_wakeup_medication_mask;
 static AppTimer *s_alarm_pulse_timer;
 static AppTimer *s_alarm_audio_pump_timer;
@@ -195,6 +196,19 @@ uint16_t alarm_active_medication_mask(void) {
       s_alarm_active
           ? s_alarm_due_medication_mask
           : 0;
+}
+
+uint16_t alarm_visual_medication_mask(void) {
+  return
+      s_confirmation_visual_medication_mask != 0
+          ? s_confirmation_visual_medication_mask
+          : alarm_active_medication_mask();
+}
+
+void alarm_release_confirmation_visual(void) {
+  if (!s_alarm_active) {
+    s_confirmation_visual_medication_mask = 0;
+  }
 }
 
 static void alarm_release_visuals(void) {
@@ -603,11 +617,11 @@ static bool alarm_window_bounds_at(
   return true;
 }
 
-static bool medication_interval_window_at(
+static bool medication_interval_occurrences_at(
     uint8_t medication_index,
     time_t timestamp,
-    time_t *window_start,
-    time_t *window_end
+    time_t *current_start,
+    time_t *next_start
 ) {
   if (medication_index >= s_medication_count) {
     return false;
@@ -640,69 +654,109 @@ static bool medication_interval_window_at(
 
   const struct tm local = *local_ptr;
   const int interval_minutes =
-      interval->hours * 60;
+      interval->hours == 3 ? 3 : interval->hours * 60;
   const int configured_start_minute =
       interval->start_hour * 60 +
       interval->start_minute;
 
   /*
-   * The configured start defines the clock phase, not a confirmation-based
-   * delay. Example 07:00 / 4 h stays 07,11,15,19,23,03 even when 11:00 is
-   * confirmed late.
+   * One fixed local-clock phase is the single truth for interval medication.
+   * Calculate the NEXT raster point directly. For a two-hour interval this
+   * can never be more than two hours ahead of timestamp.
    */
   const int phase_minute =
       configured_start_minute % interval_minutes;
   const int current_minute =
       local.tm_hour * 60 + local.tm_min;
 
-  int delta =
-      (current_minute - phase_minute) %
+  int minutes_until_next =
+      (phase_minute - current_minute) %
       interval_minutes;
 
-  if (delta < 0) {
-    delta += interval_minutes;
+  if (minutes_until_next <= 0) {
+    minutes_until_next += interval_minutes;
   }
 
-  int occurrence_minute =
-      current_minute - delta;
-  int day_offset = 0;
+  /*
+   * Keep every struct tm field inside its normal range before mktime().
+   * Pebble must never be asked to normalize values such as tm_min = 120.
+   */
+  const int next_total_minute =
+      current_minute + minutes_until_next;
+  const int next_day_offset =
+      next_total_minute /
+      DAYPART_MINUTES_PER_DAY;
+  const int next_minute =
+      next_total_minute %
+      DAYPART_MINUTES_PER_DAY;
 
-  if (occurrence_minute < 0) {
-    occurrence_minute += DAYPART_MINUTES_PER_DAY;
-    day_offset = -1;
+  struct tm next_tm = local;
+  next_tm.tm_mday += next_day_offset;
+  next_tm.tm_hour = next_minute / 60;
+  next_tm.tm_min = next_minute % 60;
+  next_tm.tm_sec = 0;
+  next_tm.tm_isdst = -1;
+
+  const time_t resolved_next =
+      mktime(&next_tm);
+
+  if (resolved_next <= timestamp) {
+    return false;
   }
 
-  struct tm start_tm = local;
-  start_tm.tm_mday += day_offset;
-  start_tm.tm_hour = occurrence_minute / 60;
-  start_tm.tm_min = occurrence_minute % 60;
-  start_tm.tm_sec = 0;
-  start_tm.tm_isdst = -1;
+  int current_minute_of_day =
+      next_minute - interval_minutes;
+  int current_day_offset =
+      next_day_offset;
 
-  struct tm end_tm = start_tm;
-  end_tm.tm_min += interval_minutes;
-  end_tm.tm_isdst = -1;
+  while (current_minute_of_day < 0) {
+    current_minute_of_day +=
+        DAYPART_MINUTES_PER_DAY;
+    current_day_offset--;
+  }
 
-  const time_t start = mktime(&start_tm);
-  const time_t end = mktime(&end_tm);
+  struct tm current_tm = local;
+  current_tm.tm_mday += current_day_offset;
+  current_tm.tm_hour =
+      current_minute_of_day / 60;
+  current_tm.tm_min =
+      current_minute_of_day % 60;
+  current_tm.tm_sec = 0;
+  current_tm.tm_isdst = -1;
+
+  const time_t resolved_current =
+      mktime(&current_tm);
 
   if (
-    start <= 0 ||
-    end <= start ||
-    timestamp < start ||
-    timestamp >= end
+    resolved_current <= 0 ||
+    resolved_current > timestamp ||
+    resolved_next <= resolved_current
   ) {
     return false;
   }
 
-  if (window_start) {
-    *window_start = start;
+  if (current_start) {
+    *current_start = resolved_current;
   }
-  if (window_end) {
-    *window_end = end;
+  if (next_start) {
+    *next_start = resolved_next;
   }
 
   return true;
+}
+
+static bool medication_interval_window_at(
+    uint8_t medication_index,
+    time_t timestamp,
+    time_t *window_start,
+    time_t *window_end
+) {
+  return medication_interval_occurrences_at(
+    medication_index,
+    timestamp,
+    window_start,
+    window_end
+  );
 }
 
 static void medication_alarm_states_load(void) {
@@ -927,26 +981,7 @@ static uint16_t regular_alarm_minute_at(
     s_dayparts.night
   };
 
-  uint16_t minute =
-      starts[medication->time];
-
-  /*
-   * Regular Pen alarms keep the existing two-minute offset.
-   * Interval medication gets its fixed clock phase from its interval
-   * settings and never passes through this helper.
-   */
-  if (
-    medication->symbol ==
-        MEDICATION_SYMBOL_PEN
-  ) {
-    minute =
-        (uint16_t)(
-          (minute + 2) %
-          DAYPART_MINUTES_PER_DAY
-        );
-  }
-
-  return minute;
+  return starts[medication->time];
 }
 
 static bool regular_alarm_timestamp_for_window(
@@ -1127,6 +1162,33 @@ static bool medication_alarm_state_at(
 
   if (!current) {
     return false;
+  }
+
+  /*
+   * Do not invent an overdue interval alarm merely because Nasu first sees
+   * an already-running interval window after its start minute.
+   *
+   * A real interval alarm creates the state in its exact start minute and
+   * record_alarm_reminder_at() then records last_reminder. An untouched
+   * state with last_reminder == 0 discovered only later is therefore a
+   * historical occurrence, not a new alarm to fire immediately.
+   *
+   * Existing open occurrences survive app restarts because their reminder
+   * timestamp is already persisted.
+   */
+  if (
+    s_medications[medication_index].time ==
+        MEDICATION_TIME_INTERVAL &&
+    !current->confirmed &&
+    current->last_reminder == 0
+  ) {
+    const time_t current_minute =
+        timestamp - (timestamp % 60);
+
+    if (resolved_start < current_minute) {
+      current->confirmed = 1;
+      (void)persist_medication_alarm_states();
+    }
   }
 
   if (occurrence_start) {
@@ -1328,18 +1390,59 @@ static void alarm_event_merge(
   }
 }
 
-static AlarmEvent next_scheduled_occurrence_after(
+static AlarmEvent next_scheduled_occurrence_for_medication_after(
+    uint8_t medication_index,
     time_t now
 ) {
-  AlarmEvent best = { 0 };
-  struct tm *today_ptr = localtime(&now);
-  const bool today_available = today_ptr != NULL;
-  struct tm today = { 0 };
+  AlarmEvent event = { 0 };
 
-  if (today_available) {
-    today = *today_ptr;
+  if (medication_index >= s_medication_count) {
+    return event;
   }
 
+  const MedicationSettings *medication =
+      &s_medications[medication_index];
+
+  if (!medication->enabled) {
+    return event;
+  }
+
+  const uint16_t bit =
+      (uint16_t)(1u << medication_index);
+
+  if (
+    medication->time ==
+        MEDICATION_TIME_INTERVAL
+  ) {
+    time_t next_start = 0;
+
+    /*
+     * Display and wakeup ask the same interval truth for the next raster
+     * point instead of deriving it indirectly from another calculation.
+     */
+    if (
+      medication_interval_occurrences_at(
+        medication_index,
+        now,
+        NULL,
+        &next_start
+      ) &&
+      next_start > now
+    ) {
+      event.timestamp = next_start;
+      event.medication_mask = bit;
+    }
+
+    return event;
+  }
+
+  struct tm *today_ptr = localtime(&now);
+
+  if (!today_ptr) {
+    return event;
+  }
+
+  const struct tm today = *today_ptr;
   const uint16_t starts[] = {
     s_dayparts.morning,
     s_dayparts.noon,
@@ -1348,121 +1451,95 @@ static AlarmEvent next_scheduled_occurrence_after(
   };
 
   for (
+    int16_t day_offset = -1;
+    day_offset <= 370;
+    day_offset++
+  ) {
+    struct tm window_tm = today;
+    const uint16_t start_minute =
+        starts[medication->time];
+
+    window_tm.tm_mday += day_offset;
+    window_tm.tm_hour = start_minute / 60;
+    window_tm.tm_min = start_minute % 60;
+    window_tm.tm_sec = 0;
+    window_tm.tm_isdst = -1;
+
+    const time_t window_start =
+        mktime(&window_tm);
+
+    if (window_start <= 0) {
+      continue;
+    }
+
+    time_t normalized_start = 0;
+    time_t window_end = 0;
+    MedicationTime slot;
+
+    if (
+      !alarm_window_bounds_at(
+        window_start,
+        &normalized_start,
+        &window_end,
+        &slot
+      ) ||
+      normalized_start != window_start ||
+      slot !=
+          (MedicationTime)medication->time
+    ) {
+      continue;
+    }
+
+    time_t alarm_time = 0;
+
+    if (
+      !regular_alarm_timestamp_for_window(
+        medication_index,
+        window_start,
+        slot,
+        &alarm_time
+      ) ||
+      alarm_time <= now ||
+      alarm_time >= window_end
+    ) {
+      continue;
+    }
+
+    event.timestamp = alarm_time;
+    event.medication_mask = bit;
+    break;
+  }
+
+  return event;
+}
+
+time_t alarm_next_medication_timestamp(
+    uint8_t medication_index
+) {
+  return
+      next_scheduled_occurrence_for_medication_after(
+        medication_index,
+        time(NULL)
+      ).timestamp;
+}
+
+static AlarmEvent next_scheduled_occurrence_after(
+    time_t now
+) {
+  AlarmEvent best = { 0 };
+
+  for (
     uint8_t index = 0;
     index < s_medication_count;
     index++
   ) {
-    const MedicationSettings *medication =
-        &s_medications[index];
-
-    if (!medication->enabled) {
-      continue;
-    }
-
-    const uint16_t bit =
-        (uint16_t)(1u << index);
-
-    if (
-      medication->time ==
-          MEDICATION_TIME_INTERVAL
-    ) {
-      time_t occurrence_start = 0;
-      time_t occurrence_end = 0;
-
-      /*
-       * The fixed next occurrence belongs to the schedule itself.
-       * It must never depend on confirmation/reminder state.
-       */
-      if (
-        medication_interval_window_at(
-          index,
-          now,
-          &occurrence_start,
-          &occurrence_end
-        ) &&
-        occurrence_end > now
-      ) {
-        alarm_event_merge(
-          (AlarmEvent) {
-            .timestamp = occurrence_end,
-            .medication_mask = bit
-          },
-          &best
-        );
-      }
-
-      continue;
-    }
-
-    if (!today_available) {
-      continue;
-    }
-
-    for (
-      int16_t day_offset = -1;
-      day_offset <= 370;
-      day_offset++
-    ) {
-      struct tm window_tm = today;
-      const uint16_t start_minute =
-          starts[medication->time];
-
-      window_tm.tm_mday += day_offset;
-      window_tm.tm_hour = start_minute / 60;
-      window_tm.tm_min = start_minute % 60;
-      window_tm.tm_sec = 0;
-      window_tm.tm_isdst = -1;
-
-      const time_t window_start =
-          mktime(&window_tm);
-
-      if (window_start <= 0) {
-        continue;
-      }
-
-      time_t normalized_start = 0;
-      time_t window_end = 0;
-      MedicationTime slot;
-
-      if (
-        !alarm_window_bounds_at(
-          window_start,
-          &normalized_start,
-          &window_end,
-          &slot
-        ) ||
-        normalized_start != window_start ||
-        slot !=
-            (MedicationTime)medication->time
-      ) {
-        continue;
-      }
-
-      time_t alarm_time = 0;
-
-      if (
-        !regular_alarm_timestamp_for_window(
-          index,
-          window_start,
-          slot,
-          &alarm_time
-        ) ||
-        alarm_time <= now ||
-        alarm_time >= window_end
-      ) {
-        continue;
-      }
-
-      alarm_event_merge(
-        (AlarmEvent) {
-          .timestamp = alarm_time,
-          .medication_mask = bit
-        },
-        &best
-      );
-
-      break;
-    }
+    alarm_event_merge(
+      next_scheduled_occurrence_for_medication_after(
+        index,
+        now
+      ),
+      &best
+    );
   }
 
   return best;
@@ -1643,6 +1720,7 @@ void alarm_stop(void) {
   s_alarm_active = false;
   s_alarm_stop_time = 0;
   s_alarm_due_medication_mask = 0;
+  s_confirmation_visual_medication_mask = 0;
 }
 
 static void alarm_intro_timer_handler(void *context) {
@@ -1761,6 +1839,48 @@ static void record_alarm_reminder_at(
   }
 }
 
+static uint16_t alarm_group_mask_from_due_mask(
+    uint16_t due_medication_mask
+) {
+  uint16_t pill_mask = 0;
+  uint16_t first_pen_mask = 0;
+
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    const uint16_t bit =
+        (uint16_t)(1u << index);
+
+    if ((due_medication_mask & bit) == 0) {
+      continue;
+    }
+
+    if (
+      s_medications[index].symbol ==
+          MEDICATION_SYMBOL_PILL
+    ) {
+      pill_mask |= bit;
+    } else if (
+      s_medications[index].symbol ==
+          MEDICATION_SYMBOL_PEN &&
+      first_pen_mask == 0
+    ) {
+      first_pen_mask = bit;
+    }
+  }
+
+  /*
+   * Pills are one confirmation group, independent of whether their schedule
+   * is a daypart or an interval. Pens are never grouped: only one Pen enters
+   * an alarm run at a time.
+   */
+  return pill_mask != 0
+      ? pill_mask
+      : first_pen_mask;
+}
+
 static void alarm_start_due_event_at(
     time_t now,
     uint16_t due_medication_mask,
@@ -1771,6 +1891,9 @@ static void alarm_start_due_event_at(
     schedule_next_alarm_wakeup();
     return;
   }
+
+  /* A fresh alarm run ends any post-confirmation visual hold. */
+  s_confirmation_visual_medication_mask = 0;
 
   s_alarm_due_medication_mask =
       due_medication_mask;
@@ -1820,23 +1943,53 @@ static void alarm_start_for_request(
   }
 
   const time_t now = time(NULL);
-  uint16_t due_medication_mask =
+  const uint16_t due_medication_mask =
       alarm_event_medication_mask_at(now);
+  const uint16_t group_mask =
+      alarm_group_mask_from_due_mask(
+        due_medication_mask
+      );
 
   /*
-   * A wakeup cookie is only a snapshot of which medications caused the
-   * scheduled OS event. It may restrict the live event, but it must never
-   * define "due" independently from the alarm core.
+   * The wakeup cookie only explains why the OS launched Nasu. The live due
+   * calculation decides the group, so a cookie for an interval pill cannot
+   * hide another pill or Pen that is due at the same time.
    */
-  if (requested_mask != 0) {
-    due_medication_mask &= requested_mask;
+  alarm_start_due_event_at(
+    now,
+    group_mask,
+    requested_mask
+  );
+}
+
+bool alarm_start_next_due_group(void) {
+  if (
+    s_alarm_active ||
+    s_transfer_screen_active
+  ) {
+    return false;
+  }
+
+  const time_t now = time(NULL);
+  const uint16_t group_mask =
+      alarm_group_mask_from_due_mask(
+        alarm_unconfirmed_medication_mask_at(
+          now
+        )
+      );
+
+  if (group_mask == 0) {
+    schedule_next_alarm_wakeup();
+    return false;
   }
 
   alarm_start_due_event_at(
     now,
-    due_medication_mask,
-    requested_mask
+    group_mask,
+    0
   );
+  schedule_next_alarm_wakeup();
+  return s_alarm_active;
 }
 
 void alarm_start(void) {
@@ -2027,14 +2180,16 @@ void alarm_confirmation_received(
   const time_t now = time(NULL);
 
   /*
-   * Confirm every currently due medication of the selected symbol.
-   * The active alarm mask describes only the reminder event that opened
-   * the alarm UI; it must not hide another already due occurrence.
+   * Confirmation belongs to the current alarm group.
+   *
+   * - PILL groups contain every pill that collided in this alarm run.
+   * - PEN groups contain exactly one Pen.
+   *
+   * This keeps one-tap pill confirmation while preventing one Pen
+   * confirmation from consuming other due Pens.
    */
   uint16_t target_mask =
-      alarm_unconfirmed_medication_mask_at(
-        now
-      );
+      s_alarm_due_medication_mask;
 
   for (
     uint8_t index = 0;
@@ -2112,7 +2267,15 @@ void alarm_confirmation_received(
     s_alarm_active &&
     s_alarm_due_medication_mask == 0
   ) {
+    /*
+     * Persist the confirmation immediately, but keep rendering exactly the
+     * group that was just confirmed until Vespa has fully scrolled in.
+     * The hold is presentation-only and is released by medication_ui once
+     * the Vespa snap has settled.
+     */
     alarm_stop();
+    s_confirmation_visual_medication_mask =
+        target_mask;
   }
 
   schedule_next_alarm_wakeup();

@@ -25,6 +25,12 @@ bool alarm_medication_is_unconfirmed_due_at(
     time_t timestamp
 );
 bool alarm_intake_navigation_lock_required(void);
+bool alarm_start_next_due_group(void);
+uint16_t alarm_visual_medication_mask(void);
+void alarm_release_confirmation_visual(void);
+time_t alarm_next_medication_timestamp(
+    uint8_t medication_index
+);
 time_t alarm_next_timestamp(void);
 void apply_alarm_settings(
     uint8_t volume,

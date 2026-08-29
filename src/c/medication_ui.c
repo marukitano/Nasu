@@ -20,7 +20,7 @@
 #define PILL_SELECT_MARKER_PRESS_OFFSET 2
 #define PILL_SELECT_MARKER_PRESSED_WIDTH   (PILL_SELECT_MARKER_WIDTH + PILL_SELECT_MARKER_PRESS_OFFSET)
 
-#define POST_CONFIRMATION_CLOSE_DELAY_MS 10000
+#define POST_CONFIRMATION_CLOSE_DELAY_MS 5000
 
 static GColor theme_foreground_color(void);
 static bool scroll_input_allowed(void);
@@ -117,6 +117,8 @@ static bool scroll_input_allowed(void) {
   return
       !s_transfer_screen_active &&
       !medication_ui_alarm_transitioning_to_pills() &&
+      !s_refresh_after_vespa_scroll &&
+      s_post_confirmation_close_timer == NULL &&
       s_confirmation_state == CONFIRM_IDLE;
 }
 
@@ -379,6 +381,14 @@ static void post_confirmation_close_timer_handler(
     s_scroll.mode != SCROLL_IDLE ||
     s_scroll.snap_index != scroll_vespa_snap_index()
   ) {
+    return;
+  }
+
+  if (alarm_start_next_due_group()) {
+    APP_LOG(
+      APP_LOG_LEVEL_INFO,
+      "Post-confirmation Vespa timeout: starting next alarm group"
+    );
     return;
   }
 
@@ -1242,6 +1252,13 @@ void medication_ui_scroll_settled(void) {
   }
 
   s_refresh_after_vespa_scroll = false;
+
+  /*
+   * The just-confirmed group was deliberately kept as a visual snapshot
+   * while Vespa scrolled into view. Only now, with Vespa fully visible, may
+   * the renderer switch to another still-open medication group.
+   */
+  alarm_release_confirmation_visual();
   refresh_app_screen_state();
 
   if (s_alarm_active && INTAKE_ROW_COUNT > 0) {

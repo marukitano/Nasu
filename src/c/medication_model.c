@@ -219,13 +219,28 @@ static bool medication_matches_group(
   const MedicationSettings *medication =
       &s_medications[medication_index];
 
-  return
-      medication->symbol ==
-          (uint8_t)symbol &&
-      alarm_medication_is_unconfirmed_due_at(
-        medication_index,
-        timestamp
-      );
+  if (
+    medication->symbol !=
+        (uint8_t)symbol
+  ) {
+    return false;
+  }
+
+  const uint16_t active_mask =
+      alarm_visual_medication_mask();
+
+  if (active_mask != 0) {
+    return
+        (
+          active_mask &
+          (uint16_t)(1u << medication_index)
+        ) != 0;
+  }
+
+  return alarm_medication_is_unconfirmed_due_at(
+    medication_index,
+    timestamp
+  );
 }
 
 bool medication_group_first_index(
@@ -233,7 +248,7 @@ bool medication_group_first_index(
     uint8_t *medication_index
 ) {
   const uint16_t active_mask =
-      alarm_active_medication_mask();
+      alarm_visual_medication_mask();
   const time_t timestamp =
       active_mask == 0
           ? time(NULL)
