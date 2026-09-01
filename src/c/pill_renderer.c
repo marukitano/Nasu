@@ -2589,49 +2589,9 @@ void draw_medications(
       NULL
     );
 
-    char dosage_and_next[48];
-
-    snprintf(
-      dosage_and_next,
-      sizeof(dosage_and_next),
-      "%s",
-      medication->dosage
-    );
-
-    if (
-      medication->time ==
-          MEDICATION_TIME_INTERVAL
-    ) {
-      const time_t next_intake =
-          alarm_next_medication_timestamp(
-            (uint8_t)medication_index
-          );
-
-      if (next_intake > 0) {
-        struct tm *next_local =
-            localtime(&next_intake);
-
-        if (next_local) {
-          snprintf(
-            dosage_and_next,
-            sizeof(dosage_and_next),
-            "%s%s%02d.%02d %02d:%02d",
-            medication->dosage,
-            medication->dosage[0] != '\0'
-                ? "  "
-                : "",
-            next_local->tm_mday,
-            next_local->tm_mon + 1,
-            next_local->tm_hour,
-            next_local->tm_min
-          );
-        }
-      }
-    }
-
     graphics_draw_text(
       ctx,
-      dosage_and_next,
+      medication->dosage,
       s_medication_detail_font,
       GRect(
         name_frame.origin.x,
