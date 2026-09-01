@@ -25,7 +25,8 @@ typedef struct {
   int32_t occurrence_start;
   int32_t last_reminder;
   uint8_t confirmed;
-  uint8_t reserved[3];
+  uint8_t suppressed;
+  uint8_t reserved[2];
 } MedicationAlarmState;
 
 typedef struct {
@@ -942,7 +943,8 @@ static MedicationAlarmState *medication_alarm_state_for_occurrence(
           (int32_t)occurrence_start,
       .last_reminder = 0,
       .confirmed = 0,
-      .reserved = { 0, 0, 0 }
+      .suppressed = 0,
+      .reserved = { 0, 0 }
     };
     changed = true;
   } else if (current->confirmed > 1) {
@@ -1164,33 +1166,6 @@ static bool medication_alarm_state_at(
     return false;
   }
 
-  /*
-   * Do not invent an overdue interval alarm merely because Nasu first sees
-   * an already-running interval window after its start minute.
-   *
-   * A real interval alarm creates the state in its exact start minute and
-   * record_alarm_reminder_at() then records last_reminder. An untouched
-   * state with last_reminder == 0 discovered only later is therefore a
-   * historical occurrence, not a new alarm to fire immediately.
-   *
-   * Existing open occurrences survive app restarts because their reminder
-   * timestamp is already persisted.
-   */
-  if (
-    s_medications[medication_index].time ==
-        MEDICATION_TIME_INTERVAL &&
-    !current->confirmed &&
-    current->last_reminder == 0
-  ) {
-    const time_t current_minute =
-        timestamp - (timestamp % 60);
-
-    if (resolved_start < current_minute) {
-      current->confirmed = 1;
-      (void)persist_medication_alarm_states();
-    }
-  }
-
   if (occurrence_start) {
     *occurrence_start = resolved_start;
   }
@@ -1235,6 +1210,7 @@ static time_t reminder_due_timestamp_for_state(
   if (
     !state ||
     state->confirmed ||
+    state->suppressed ||
     occurrence_start <= 0 ||
     occurrence_end <= occurrence_start
   ) {
@@ -1313,7 +1289,8 @@ bool alarm_medication_is_unconfirmed_due_at(
         &state
       ) &&
       state &&
-      !state->confirmed;
+      !state->confirmed &&
+      !state->suppressed;
 }
 
 uint8_t alarm_unconfirmed_symbol_mask_at(
@@ -1824,7 +1801,8 @@ static void record_alarm_reminder_at(
         &state
       ) ||
       !state ||
-      state->confirmed
+      state->confirmed ||
+      state->suppressed
     ) {
       continue;
     }
@@ -2139,8 +2117,9 @@ bool alarm_reset_after_settings_save(void) {
               .occurrence_start =
                   (int32_t)occurrence_start,
               .last_reminder = 0,
-              .confirmed = 1,
-              .reserved = { 0, 0, 0 }
+              .confirmed = 0,
+              .suppressed = 1,
+              .reserved = { 0, 0 }
             };
       }
     }
@@ -2282,6 +2261,81 @@ void alarm_confirmation_received(
 }
 
 
+/*
+ * A manual app launch in the middle of an interval window must not invent a
+ * retroactive alarm. Keep that scheduling decision separate from confirmed:
+ * only a real user confirmation may set confirmed = 1.
+ *
+ * A genuine wakeup launch deliberately skips this function. Pebble can
+ * deliver a scheduled wakeup after its exact minute; that must still be a
+ * real, unconfirmed occurrence and must join every other due PILL.
+ */
+static void suppress_historical_intervals_on_manual_launch(
+    time_t now
+) {
+  const time_t current_minute =
+      now - (now % 60);
+  bool state_changed = false;
+
+  medication_alarm_states_load();
+
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    if (
+      !s_medications[index].enabled ||
+      s_medications[index].time !=
+          MEDICATION_TIME_INTERVAL
+    ) {
+      continue;
+    }
+
+    time_t occurrence_start = 0;
+
+    if (
+      !medication_occurrence_at(
+        index,
+        now,
+        &occurrence_start,
+        NULL
+      ) ||
+      occurrence_start >= current_minute
+    ) {
+      continue;
+    }
+
+    MedicationAlarmState *state =
+        &s_medication_alarm_states[index];
+
+    /*
+     * Never replace an already-known occurrence. It may be a real alarm that
+     * rang earlier and is still waiting for confirmation/reminders.
+     */
+    if (
+      state->occurrence_start ==
+          (int32_t)occurrence_start
+    ) {
+      continue;
+    }
+
+    *state = (MedicationAlarmState) {
+      .occurrence_start =
+          (int32_t)occurrence_start,
+      .last_reminder = 0,
+      .confirmed = 0,
+      .suppressed = 1,
+      .reserved = { 0, 0 }
+    };
+    state_changed = true;
+  }
+
+  if (state_changed) {
+    (void)persist_medication_alarm_states();
+  }
+}
+
 void medication_alarm_init(void) {
   load_alarm_settings();
   medication_alarm_states_load();
@@ -2322,6 +2376,12 @@ void medication_alarm_init(void) {
 
   s_alarm_launch_pending =
       valid_wakeup_launch;
+
+  if (!valid_wakeup_launch) {
+    suppress_historical_intervals_on_manual_launch(
+      time(NULL)
+    );
+  }
 
   schedule_next_alarm_wakeup();
 }
