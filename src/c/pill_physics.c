@@ -14,7 +14,6 @@
 #include "confirmation_ui.h"
 #include "medication_ui.h"
 
-#define NASU_DIAGNOSTIC_PHYSICS_NO_ACCEL 0
 #define NASU_SIMPLE_TILT_PHYSICS 1
 
 /*
@@ -2227,17 +2226,6 @@ void pill_physics_update_activity(void) {
     return;
   }
 
-#if NASU_DIAGNOSTIC_PHYSICS_NO_ACCEL
-  /*
-   * A/B diagnostic build:
-   * Run the complete rigid-body physics timer, but never subscribe to
-   * Pebble's accelerometer service.
-   */
-  if (s_pill_physics_accel_subscribed) {
-    accel_data_service_unsubscribe();
-    s_pill_physics_accel_subscribed = false;
-  }
-#else
   if (!s_pill_physics_accel_subscribed) {
     accel_service_set_sampling_rate(
       ACCEL_SAMPLING_10HZ
@@ -2248,7 +2236,6 @@ void pill_physics_update_activity(void) {
     );
     s_pill_physics_accel_subscribed = true;
   }
-#endif
 
   if (!s_pill_physics_timer) {
     s_pill_physics_quiet_frames = 0;
