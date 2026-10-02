@@ -15,7 +15,7 @@
 #include "medication_ui.h"
 
 #define NASU_DIAGNOSTIC_PHYSICS_NO_ACCEL 0
-#define NASU_DIAGNOSTIC_ACCEL_EMPTY_HANDLER 1
+#define NASU_SIMPLE_TILT_PHYSICS 1
 
 /*
  * Limit display-plane gravity to sin(45 degrees) ~= 0.707 g. Tilting the
@@ -58,9 +58,8 @@ static uint8_t s_pill_physics_sensor_quiet_samples;
 
 /*
  * Pebble firmware can occasionally leave AccelData.did_vibrate stuck true
- * even after the vibration motor stopped. At 25 Hz, trust that flag for
- * at most three seconds. Afterwards sensor data must be accepted again,
- * otherwise pill physics can remain asleep until the watch is rebooted.
+ * even after the vibration motor stopped. At 10 Hz, trust that flag for
+ * at most three seconds. Afterwards sensor data must be accepted again.
  */
 #define PILL_PHYSICS_VIBRATION_FLAG_MAX_SAMPLES 30
 static uint8_t s_pill_physics_vibration_flag_samples;
@@ -1671,16 +1670,52 @@ static void pill_rb_drive_from_tilt(
   const int16_t active_magnitude =
       limited_magnitude - deadzone_mg;
 
-  *drive_x = (int16_t)(
+  int32_t raw_drive_x = (int32_t)(
     ((int32_t)s_pill_physics_gravity_x *
      active_magnitude) /
     magnitude
   );
-  *drive_y = (int16_t)(
+  int32_t raw_drive_y = (int32_t)(
     ((int32_t)s_pill_physics_gravity_y *
      active_magnitude) /
     magnitude
   );
+
+  /*
+   * Long pills behave like a small log: they prefer to roll sideways,
+   * perpendicular to their long axis, instead of sliding like a ball.
+   * Round pills (half_length == 0) keep isotropic motion.
+   */
+  if (body && body->collision_half_length > 0) {
+    const int32_t side_x_q12 = (int32_t)(
+      (-(int64_t)sin_lookup(body->angle) *
+       PILL_RB_PARAMETER_Q12) /
+      TRIG_MAX_RATIO
+    );
+    const int32_t side_y_q12 = (int32_t)(
+      ((int64_t)cos_lookup(body->angle) *
+       PILL_RB_PARAMETER_Q12) /
+      TRIG_MAX_RATIO
+    );
+
+    const int32_t sideways_drive = (int32_t)(
+      ((int64_t)raw_drive_x * side_x_q12 +
+       (int64_t)raw_drive_y * side_y_q12) /
+      PILL_RB_PARAMETER_Q12
+    );
+
+    raw_drive_x = (int32_t)(
+      ((int64_t)sideways_drive * side_x_q12) /
+      PILL_RB_PARAMETER_Q12
+    );
+    raw_drive_y = (int32_t)(
+      ((int64_t)sideways_drive * side_y_q12) /
+      PILL_RB_PARAMETER_Q12
+    );
+  }
+
+  *drive_x = (int16_t)raw_drive_x;
+  *drive_y = (int16_t)raw_drive_y;
 }
 
 static void pill_physics_schedule_tick(uint32_t delay_ms) {
@@ -1888,6 +1923,10 @@ static void pill_physics_tick(void *context) {
       );
     }
 
+    /*
+     * Pill-to-pill contacts are mandatory: every medication must remain
+     * individually visible. Never allow pills to pass through/overlap.
+     */
     for (
       uint8_t first_index = 0;
       first_index < s_pill_physics_body_count;
@@ -2036,15 +2075,115 @@ static void pill_physics_accel_handler(
     AccelData *data,
     uint32_t num_samples
 ) {
+  if (!data || num_samples == 0) {
+    return;
+  }
+
+  const AccelData sample = data[num_samples - 1];
+
+  if (sample.did_vibrate) {
+    if (
+      s_pill_physics_vibration_flag_samples <
+          PILL_PHYSICS_VIBRATION_FLAG_MAX_SAMPLES
+    ) {
+      s_pill_physics_vibration_flag_samples++;
+
+      if (
+        s_pill_physics_vibration_flag_samples <
+            PILL_PHYSICS_VIBRATION_FLAG_MAX_SAMPLES
+      ) {
+        return;
+      }
+
+      APP_LOG(
+        APP_LOG_LEVEL_WARNING,
+        "did_vibrate stuck; resuming pill accelerometer"
+      );
+    }
+  } else {
+    s_pill_physics_vibration_flag_samples = 0;
+  }
+
+  if (
+    s_confirmed_screen_active ||
+    s_transfer_screen_active ||
+    s_pill_physics_body_count == 0
+  ) {
+    return;
+  }
+
+  const int16_t target_x = sample.x;
+  const int16_t target_y = (int16_t)-sample.y;
+  const int16_t old_magnitude =
+      pill_rb_tilt_magnitude(
+        s_pill_physics_gravity_x,
+        s_pill_physics_gravity_y
+      );
+  s_pill_physics_gravity_x = (int16_t)(
+    (s_pill_physics_gravity_x + target_x * 5) / 6
+  );
+  s_pill_physics_gravity_y = (int16_t)(
+    (s_pill_physics_gravity_y + target_y * 5) / 6
+  );
+
+  const int16_t new_magnitude =
+      pill_rb_tilt_magnitude(
+        s_pill_physics_gravity_x,
+        s_pill_physics_gravity_y
+      );
   /*
-   * Diagnostic A/B build:
-   * Keep Pebble's accelerometer service subscribed at 10 Hz, but do not
-   * inspect or process any samples. If this still crashes, the problem is
-   * outside the tilt/rigid-body calculations.
+   * Hysteresis prevents filtered sensor noise around the nominal 50 mg
+   * threshold from repeatedly waking and sleeping a settled pile. Individual
+   * pills vary slightly around that threshold; the wake event still uses the
+   * shared wider 40/60 mg band.
    */
-  (void)data;
-  (void)num_samples;
+  const bool entered_drive_band =
+      old_magnitude <=
+          PILL_RB_TILT_DEADZONE_MG +
+          PILL_RB_TILT_WAKE_HYSTERESIS_MG &&
+      new_magnitude >
+          PILL_RB_TILT_DEADZONE_MG +
+          PILL_RB_TILT_WAKE_HYSTERESIS_MG;
+  const bool left_drive_band =
+      old_magnitude >=
+          PILL_RB_TILT_DEADZONE_MG -
+          PILL_RB_TILT_WAKE_HYSTERESIS_MG &&
+      new_magnitude <
+          PILL_RB_TILT_DEADZONE_MG -
+          PILL_RB_TILT_WAKE_HYSTERESIS_MG;
+  const bool deadzone_crossed =
+      entered_drive_band ||
+      left_drive_band;
+  const bool meaningful_change =
+      deadzone_crossed ||
+      abs_int32(
+        (int32_t)s_pill_physics_gravity_x -
+        s_pill_physics_last_target_x
+      ) >= PILL_RB_SENSOR_WAKE_MG ||
+      abs_int32(
+        (int32_t)s_pill_physics_gravity_y -
+        s_pill_physics_last_target_y
+      ) >= PILL_RB_SENSOR_WAKE_MG;
+
+  if (!meaningful_change) {
+    if (s_pill_physics_sensor_quiet_samples < 255) {
+      s_pill_physics_sensor_quiet_samples++;
+    }
+    return;
+  }
+
+  s_pill_physics_last_target_x =
+      s_pill_physics_gravity_x;
+  s_pill_physics_last_target_y =
+      s_pill_physics_gravity_y;
+  s_pill_physics_sensor_quiet_samples = 0;
+  s_pill_physics_quiet_frames = 0;
+
+  if (!s_pill_physics_timer) {
+    pill_physics_update_activity();
+  }
 }
+
 void pill_physics_set_window_visible(
     bool visible
 ) {
@@ -2069,9 +2208,10 @@ void pill_physics_stop(void) {
   cancel_timer(&s_pill_physics_timer);
 
   /*
-   * Diagnostic: keep the accelerometer subscription alive for the complete
-   * process lifetime. The OS tears it down when the app exits. This isolates
-   * accel_data_service_unsubscribe() as a potential crash source.
+   * Keep the accelerometer service subscribed for the lifetime of the app.
+   * On current Pebble Time 2 firmware, accel_data_service_unsubscribe()
+   * during the running process can crash the app. Pebble tears the service
+   * down automatically when the app exits.
    */
 }
 
