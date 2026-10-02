@@ -42,6 +42,10 @@ static MedicationIntervalSettings
     s_medication_intervals[MAX_MEDICATIONS];
 static MedicationIntervalSettings
     s_pending_medication_intervals[MAX_MEDICATIONS];
+static MedicationEveryDaysSettings
+    s_medication_every_days[MAX_MEDICATIONS];
+static MedicationEveryDaysSettings
+    s_pending_medication_every_days[MAX_MEDICATIONS];
 static const DaypartSettings s_default_dayparts = {
   .morning = DEFAULT_MORNING_START_MINUTE,
   .noon = DEFAULT_NOON_START_MINUTE,
@@ -96,6 +100,16 @@ static void reset_medication_intervals(
 static bool persist_medication_intervals(void);
 static void load_medication_intervals(void);
 static bool apply_medication_intervals(bool save);
+static bool medication_every_days_settings_valid(
+    const MedicationEveryDaysSettings *settings
+);
+static void reset_medication_every_days(
+    MedicationEveryDaysSettings *settings
+);
+static bool persist_medication_every_days(void);
+static void load_medication_every_days(void);
+static bool apply_medication_every_days(bool save);
+
 const MedicationIntervalSettings *medication_interval_settings_at(
     uint8_t medication_index
 ) {
@@ -104,6 +118,16 @@ const MedicationIntervalSettings *medication_interval_settings_at(
   }
 
   return &s_medication_intervals[medication_index];
+}
+
+const MedicationEveryDaysSettings *medication_every_days_settings_at(
+    uint8_t medication_index
+) {
+  if (medication_index >= MAX_MEDICATIONS) {
+    return NULL;
+  }
+
+  return &s_medication_every_days[medication_index];
 }
 
 static bool medication_interval_settings_valid(
@@ -305,6 +329,195 @@ static bool apply_medication_intervals(bool save) {
   return saved;
 }
 
+static bool calendar_date_valid(
+    int year,
+    int month,
+    int day
+) {
+  if (
+    year < 2000 ||
+    year > 2099 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1
+  ) {
+    return false;
+  }
+
+  static const uint8_t days_per_month[] = {
+    31, 28, 31, 30, 31, 30,
+    31, 31, 30, 31, 30, 31
+  };
+
+  uint8_t maximum_day =
+      days_per_month[month - 1];
+
+  const bool leap_year =
+      year % 4 == 0 &&
+      (
+        year % 100 != 0 ||
+        year % 400 == 0
+      );
+
+  if (month == 2 && leap_year) {
+    maximum_day = 29;
+  }
+
+  return day <= maximum_day;
+}
+
+static bool medication_every_days_settings_valid(
+    const MedicationEveryDaysSettings *settings
+) {
+  if (!settings) {
+    return false;
+  }
+
+  if (
+    settings->start_year == 0 &&
+    settings->start_month == 0 &&
+    settings->start_day == 0
+  ) {
+    return true;
+  }
+
+  return calendar_date_valid(
+    settings->start_year,
+    settings->start_month,
+    settings->start_day
+  );
+}
+
+static void reset_medication_every_days(
+    MedicationEveryDaysSettings *settings
+) {
+  if (!settings) {
+    return;
+  }
+
+  memset(
+    settings,
+    0,
+    sizeof(MedicationEveryDaysSettings) *
+        MAX_MEDICATIONS
+  );
+}
+
+static bool persist_medication_every_days(void) {
+  for (
+    uint8_t index = 0;
+    index < MAX_MEDICATIONS;
+    index++
+  ) {
+    if (
+      !medication_every_days_settings_valid(
+        &s_medication_every_days[index]
+      )
+    ) {
+      return false;
+    }
+  }
+
+  const int written = persist_write_data(
+    MEDICATION_EVERY_DAYS_SETTINGS_PERSIST_KEY,
+    s_medication_every_days,
+    sizeof(s_medication_every_days)
+  );
+
+  MedicationEveryDaysSettings verified[
+    MAX_MEDICATIONS
+  ];
+  memset(verified, 0, sizeof(verified));
+
+  const int read = persist_read_data(
+    MEDICATION_EVERY_DAYS_SETTINGS_PERSIST_KEY,
+    verified,
+    sizeof(verified)
+  );
+
+  const bool ok =
+      written == (int)sizeof(s_medication_every_days) &&
+      read == (int)sizeof(verified) &&
+      memcmp(
+        verified,
+        s_medication_every_days,
+        sizeof(verified)
+      ) == 0;
+
+  if (!ok) {
+    APP_LOG(
+      APP_LOG_LEVEL_ERROR,
+      "Every-days persistence verification failed"
+    );
+  }
+
+  return ok;
+}
+
+static void load_medication_every_days(void) {
+  reset_medication_every_days(
+    s_medication_every_days
+  );
+
+  if (
+    !persist_exists(
+      MEDICATION_EVERY_DAYS_SETTINGS_PERSIST_KEY
+    ) ||
+    persist_get_size(
+      MEDICATION_EVERY_DAYS_SETTINGS_PERSIST_KEY
+    ) != (int)sizeof(s_medication_every_days)
+  ) {
+    return;
+  }
+
+  MedicationEveryDaysSettings stored[
+    MAX_MEDICATIONS
+  ];
+  memset(stored, 0, sizeof(stored));
+
+  if (
+    persist_read_data(
+      MEDICATION_EVERY_DAYS_SETTINGS_PERSIST_KEY,
+      stored,
+      sizeof(stored)
+    ) != (int)sizeof(stored)
+  ) {
+    return;
+  }
+
+  for (
+    uint8_t index = 0;
+    index < MAX_MEDICATIONS;
+    index++
+  ) {
+    if (
+      !medication_every_days_settings_valid(
+        &stored[index]
+      )
+    ) {
+      return;
+    }
+  }
+
+  memcpy(
+    s_medication_every_days,
+    stored,
+    sizeof(s_medication_every_days)
+  );
+}
+
+static bool apply_medication_every_days(bool save) {
+  memcpy(
+    s_medication_every_days,
+    s_pending_medication_every_days,
+    sizeof(s_medication_every_days)
+  );
+
+  return
+      !save ||
+      persist_medication_every_days();
+}
+
 static MedicationSettings medication_from_legacy_v1(
     const LegacyMedicationSettingsV1 *legacy
 );
@@ -356,6 +569,10 @@ static bool read_medication_interval_from_message(
     DictionaryIterator *iterator,
     MedicationIntervalSettings *settings
 );
+static bool read_medication_every_days_from_message(
+    DictionaryIterator *iterator,
+    MedicationEveryDaysSettings *settings
+);
 static bool read_medication_interval_from_message(
     DictionaryIterator *iterator,
     MedicationIntervalSettings *settings
@@ -398,6 +615,54 @@ static bool read_medication_interval_from_message(
     .hours = (uint8_t)hours,
     .start_hour = (uint8_t)start_hour,
     .start_minute = (uint8_t)start_minute
+  };
+
+  return true;
+}
+
+static bool read_medication_every_days_from_message(
+    DictionaryIterator *iterator,
+    MedicationEveryDaysSettings *settings
+) {
+  if (!iterator || !settings) {
+    return false;
+  }
+
+  Tuple *year_tuple = dict_find(
+    iterator,
+    MESSAGE_KEY_MED_EVERY_START_YEAR
+  );
+  Tuple *month_tuple = dict_find(
+    iterator,
+    MESSAGE_KEY_MED_EVERY_START_MONTH
+  );
+  Tuple *day_tuple = dict_find(
+    iterator,
+    MESSAGE_KEY_MED_EVERY_START_DAY
+  );
+
+  if (!year_tuple && !month_tuple && !day_tuple) {
+    *settings = (MedicationEveryDaysSettings) { 0 };
+    return true;
+  }
+
+  int32_t year;
+  int32_t month;
+  int32_t day;
+
+  if (
+    !tuple_read_int32(year_tuple, &year) ||
+    !tuple_read_int32(month_tuple, &month) ||
+    !tuple_read_int32(day_tuple, &day) ||
+    !calendar_date_valid(year, month, day)
+  ) {
+    return false;
+  }
+
+  *settings = (MedicationEveryDaysSettings) {
+    .start_year = (uint16_t)year,
+    .start_month = (uint8_t)month,
+    .start_day = (uint8_t)day
   };
 
   return true;
@@ -643,7 +908,7 @@ static bool medication_settings_valid(
     settings->quantity > 20 ||
     settings->time > MEDICATION_TIME_INTERVAL ||
     settings->schedule >
-        MEDICATION_SCHEDULE_MONTHLY ||
+        MEDICATION_SCHEDULE_EVERY_DAYS ||
     settings->symbol >
         MEDICATION_SYMBOL_PEN ||
     settings->shape > 4 ||
@@ -679,9 +944,19 @@ static bool medication_settings_valid(
     return settings->day <= 6;
   }
 
+  if (
+    settings->schedule ==
+        MEDICATION_SCHEDULE_MONTHLY
+  ) {
+    return
+        settings->day >= 1 &&
+        settings->day <= 31;
+  }
+
   return
-      settings->day >= 1 &&
-      settings->day <= 31;
+      settings->schedule ==
+          MEDICATION_SCHEDULE_EVERY_DAYS &&
+      settings->day >= 2;
 }
 
 
@@ -1656,7 +1931,7 @@ static bool read_medication_from_message(
     time < MEDICATION_TIME_MORNING ||
     time > MEDICATION_TIME_INTERVAL ||
     schedule < MEDICATION_SCHEDULE_DAILY ||
-    schedule > MEDICATION_SCHEDULE_MONTHLY ||
+    schedule > MEDICATION_SCHEDULE_EVERY_DAYS ||
     symbol < MEDICATION_SYMBOL_PILL ||
     symbol > MEDICATION_SYMBOL_PEN ||
     shape < 0 ||
@@ -1691,6 +1966,10 @@ static bool read_medication_from_message(
     (
       schedule == MEDICATION_SCHEDULE_MONTHLY &&
       (day < 1 || day > 31)
+    ) ||
+    (
+      schedule == MEDICATION_SCHEDULE_EVERY_DAYS &&
+      (day < 2 || day > 255)
     )
   ) {
     return false;
@@ -1758,6 +2037,9 @@ static void reset_pending_medications(
   );
   reset_medication_intervals(
     s_pending_medication_intervals
+  );
+  reset_medication_every_days(
+    s_pending_medication_every_days
   );
   s_pending_count = count;
   s_pending_received_mask = 0;
@@ -2140,6 +2422,7 @@ static void settings_inbox_received(
 
     MedicationSettings medication;
     MedicationIntervalSettings interval_settings;
+    MedicationEveryDaysSettings every_days_settings;
     MedicationAppearance appearance;
 
     if (
@@ -2150,6 +2433,15 @@ static void settings_inbox_received(
       !read_medication_interval_from_message(
         iterator,
         &interval_settings
+      ) ||
+      !read_medication_every_days_from_message(
+        iterator,
+        &every_days_settings
+      ) ||
+      (
+        medication.schedule ==
+            MEDICATION_SCHEDULE_EVERY_DAYS &&
+        every_days_settings.start_year == 0
       ) ||
       !read_medication_appearance_from_message(
         iterator,
@@ -2167,6 +2459,8 @@ static void settings_inbox_received(
     s_pending_medications[index] = medication;
     s_pending_medication_intervals[index] =
         interval_settings;
+    s_pending_medication_every_days[index] =
+        every_days_settings;
     s_pending_medication_appearances[index] = appearance;
 
     s_pending_received_mask |=
@@ -2314,6 +2608,8 @@ static void settings_inbox_received(
     (uint8_t)reminder_interval,
     true
   );
+  const bool every_days_saved =
+      apply_medication_every_days(true);
   const bool medication_list_saved =
       apply_medication_list(
         s_pending_medications,
@@ -2331,6 +2627,7 @@ static void settings_inbox_received(
       persist_scalar_settings() &&
       medication_list_saved &&
       intervals_saved &&
+      every_days_saved &&
       appearances_saved;
   s_settings_reset_verified =
       s_settings_storage_verified &&
@@ -2415,6 +2712,7 @@ void watch_settings_init(void) {
    * during medication migration may already query interval due state.
    */
   load_medication_intervals();
+  load_medication_every_days();
   load_medication_settings();
   load_medication_appearances();
   reset_pending_medications(0);
