@@ -13,6 +13,7 @@
 #include "scroll_controller.h"
 #include "confirmation_ui.h"
 #include "medication_ui.h"
+#include "debug_log.h"
 
 #define ALARM_VISUAL_LEAD_IN_MS 160
 #define ALARM_EVENT_COOKIE_BASE 0x4E530000u
@@ -1818,7 +1819,8 @@ static void record_alarm_reminder_at(
 }
 
 static uint16_t alarm_group_mask_from_due_mask(
-    uint16_t due_medication_mask
+    uint16_t due_medication_mask,
+    time_t timestamp
 ) {
   uint16_t pill_mask = 0;
   uint16_t first_pen_mask = 0;
@@ -1850,10 +1852,32 @@ static uint16_t alarm_group_mask_from_due_mask(
   }
 
   /*
-   * Pills are one confirmation group, independent of whether their schedule
-   * is a daypart or an interval. Pens are never grouped: only one Pen enters
-   * an alarm run at a time.
+   * If this event contains a Pill, merge every currently open Pill into
+   * the same confirmation group. Its own reminder does not need to be due
+   * in this exact minute. Regular and interval Pills are one group.
+   *
+   * Pens remain individual and never get pulled into a Pill group.
    */
+  if (pill_mask != 0) {
+    for (
+      uint8_t index = 0;
+      index < s_medication_count;
+      index++
+    ) {
+      if (
+        s_medications[index].symbol ==
+            MEDICATION_SYMBOL_PILL &&
+        alarm_medication_is_unconfirmed_due_at(
+          index,
+          timestamp
+        )
+      ) {
+        pill_mask |=
+            (uint16_t)(1u << index);
+      }
+    }
+  }
+
   return pill_mask != 0
       ? pill_mask
       : first_pen_mask;
@@ -1864,6 +1888,12 @@ static void alarm_start_due_event_at(
     uint16_t due_medication_mask,
     uint16_t requested_mask
 ) {
+  debug_log_event(
+    NASU_DBG_ALARM_START,
+    due_medication_mask,
+    requested_mask,
+    (uint16_t)s_medication_count
+  );
   if (due_medication_mask == 0) {
     refresh_app_screen_state();
     schedule_next_alarm_wakeup();
@@ -1925,7 +1955,8 @@ static void alarm_start_for_request(
       alarm_event_medication_mask_at(now);
   const uint16_t group_mask =
       alarm_group_mask_from_due_mask(
-        due_medication_mask
+        due_medication_mask,
+        now
       );
 
   /*
@@ -1953,7 +1984,8 @@ bool alarm_start_next_due_group(void) {
       alarm_group_mask_from_due_mask(
         alarm_unconfirmed_medication_mask_at(
           now
-        )
+        ),
+        now
       );
 
   if (group_mask == 0) {
@@ -2038,9 +2070,15 @@ void alarm_handle_minute_tick(
       alarm_event_medication_mask_at(now);
 
   if (due_medication_mask != 0) {
+    const uint16_t group_mask =
+        alarm_group_mask_from_due_mask(
+          due_medication_mask,
+          now
+        );
+
     alarm_start_due_event_at(
       now,
-      due_medication_mask,
+      group_mask,
       0
     );
   }
@@ -2169,6 +2207,13 @@ void alarm_confirmation_received(
    */
   uint16_t target_mask =
       s_alarm_due_medication_mask;
+
+  debug_log_event(
+    NASU_DBG_ALARM_CONFIRM,
+    target_mask,
+    (uint16_t)symbol,
+    alarm_visual_medication_mask()
+  );
 
   for (
     uint8_t index = 0;

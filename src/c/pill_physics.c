@@ -14,6 +14,8 @@
 #include "confirmation_ui.h"
 #include "medication_ui.h"
 
+#define NASU_DIAGNOSTIC_STATIC_PILLS 1
+
 /*
  * Limit display-plane gravity to sin(45 degrees) ~= 0.707 g. Tilting the
  * watch farther therefore keeps the same direction, but no longer increases
@@ -52,6 +54,15 @@ static int16_t s_pill_physics_last_target_x;
 static int16_t s_pill_physics_last_target_y;
 static uint8_t s_pill_physics_quiet_frames;
 static uint8_t s_pill_physics_sensor_quiet_samples;
+
+/*
+ * Pebble firmware can occasionally leave AccelData.did_vibrate stuck true
+ * even after the vibration motor stopped. At 25 Hz, trust that flag for
+ * at most three seconds. Afterwards sensor data must be accepted again,
+ * otherwise pill physics can remain asleep until the watch is rebooted.
+ */
+#define PILL_PHYSICS_VIBRATION_FLAG_MAX_SAMPLES 75
+static uint8_t s_pill_physics_vibration_flag_samples;
 
 static bool pill_physics_medication_is_visible(
     uint8_t medication_index
@@ -2019,7 +2030,26 @@ static void pill_physics_accel_handler(
   const AccelData sample = data[num_samples - 1];
 
   if (sample.did_vibrate) {
-    return;
+    if (
+      s_pill_physics_vibration_flag_samples <
+          PILL_PHYSICS_VIBRATION_FLAG_MAX_SAMPLES
+    ) {
+      s_pill_physics_vibration_flag_samples++;
+
+      if (
+        s_pill_physics_vibration_flag_samples <
+            PILL_PHYSICS_VIBRATION_FLAG_MAX_SAMPLES
+      ) {
+        return;
+      }
+
+      APP_LOG(
+        APP_LOG_LEVEL_WARNING,
+        "did_vibrate stuck; resuming pill accelerometer"
+      );
+    }
+  } else {
+    s_pill_physics_vibration_flag_samples = 0;
   }
 
   if (
@@ -2132,6 +2162,22 @@ void pill_physics_stop(void) {
 }
 
 void pill_physics_update_activity(void) {
+#if NASU_DIAGNOSTIC_STATIC_PILLS
+  /*
+   * A/B diagnostic build:
+   * Keep all PillPhysicsBody objects intact for rendering, but run
+   * neither the physics timer nor accelerometer callbacks.
+   */
+  cancel_timer(&s_pill_physics_timer);
+
+  if (s_pill_physics_accel_subscribed) {
+    accel_data_service_unsubscribe();
+    s_pill_physics_accel_subscribed = false;
+  }
+
+  return;
+#endif
+
   const bool physics_should_run =
       s_pill_physics_window_visible &&
       !s_confirmed_screen_active &&
@@ -2182,6 +2228,7 @@ void pill_physics_init(void) {
   s_pill_physics_window_visible = false;
   s_pill_physics_accel_subscribed = false;
   s_pill_physics_timer = NULL;
+  s_pill_physics_vibration_flag_samples = 0;
 }
 
 void pill_physics_deinit(void) {

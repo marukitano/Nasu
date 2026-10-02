@@ -13,6 +13,7 @@
 #include "scroll_controller.h"
 #include "confirmation_ui.h"
 #include "medication_ui.h"
+#include "debug_log.h"
 
 #define PILL_SELECT_MARKER_WIDTH 5
 #define PILL_SELECT_MARKER_HEIGHT 52
@@ -38,6 +39,7 @@ static GFont s_nurse_japanese_font;
 static AppTimer *s_ui_timer;
 static AppTimer *s_alarm_screen_timer;
 static AppTimer *s_post_confirmation_close_timer;
+static uint32_t s_post_confirmation_close_started_ms;
 static bool s_refresh_after_vespa_scroll;
 static bool s_alarm_transitioning_to_pills;
 static bool s_alarm_navigation_locked;
@@ -361,6 +363,7 @@ void medication_ui_pause_animation_timer(void) {
 
 void medication_ui_cancel_post_confirmation_close(void) {
   cancel_timer(&s_post_confirmation_close_timer);
+  s_post_confirmation_close_started_ms = 0;
 }
 
 static void post_confirmation_close_timer_handler(
@@ -368,6 +371,47 @@ static void post_confirmation_close_timer_handler(
 ) {
   (void)context;
   s_post_confirmation_close_timer = NULL;
+
+  debug_log_event(
+    NASU_DBG_CLOSE_FIRE,
+    (uint16_t)(uint8_t)s_scroll.snap_index,
+    (uint16_t)INTAKE_ROW_COUNT,
+    (uint16_t)(
+      (s_alarm_active ? 1u : 0u) |
+      (s_alarm_navigation_locked ? 2u : 0u)
+    )
+  );
+
+  /*
+   * Never leave Vespa before five complete seconds have elapsed since
+   * it settled. This also protects against an unexpectedly early/stale
+   * timer callback.
+   */
+  if (s_post_confirmation_close_started_ms != 0) {
+    const uint32_t elapsed_ms =
+        current_time_ms() -
+        s_post_confirmation_close_started_ms;
+
+    if (elapsed_ms < POST_CONFIRMATION_CLOSE_DELAY_MS) {
+      const uint32_t remaining_ms =
+          POST_CONFIRMATION_CLOSE_DELAY_MS -
+          elapsed_ms;
+
+      s_post_confirmation_close_timer =
+          app_timer_register(
+            remaining_ms,
+            post_confirmation_close_timer_handler,
+            NULL
+          );
+
+      APP_LOG(
+        APP_LOG_LEVEL_INFO,
+        "Vespa close deferred: %lu ms remaining",
+        (unsigned long)remaining_ms
+      );
+      return;
+    }
+  }
 
   /*
    * Defensive guards: close only if the user is still sitting on the
@@ -384,6 +428,8 @@ static void post_confirmation_close_timer_handler(
     return;
   }
 
+  s_post_confirmation_close_started_ms = 0;
+
   if (alarm_start_next_due_group()) {
     APP_LOG(
       APP_LOG_LEVEL_INFO,
@@ -394,14 +440,24 @@ static void post_confirmation_close_timer_handler(
 
   APP_LOG(
     APP_LOG_LEVEL_INFO,
-    "Post-confirmation Vespa timeout: closing app"
+    "Post-confirmation Vespa timeout: closing to watchface"
   );
 
-  back_button_handler(NULL, NULL);
+  app_exit_to_watchface();
 }
 
 static void schedule_post_confirmation_close(void) {
+  debug_log_event(
+    NASU_DBG_CLOSE_SCHEDULE,
+    (uint16_t)(uint8_t)s_scroll.snap_index,
+    (uint16_t)INTAKE_ROW_COUNT,
+    0
+  );
+
   medication_ui_cancel_post_confirmation_close();
+
+  s_post_confirmation_close_started_ms =
+      current_time_ms();
 
   s_post_confirmation_close_timer = app_timer_register(
     POST_CONFIRMATION_CLOSE_DELAY_MS,
@@ -1124,6 +1180,13 @@ static void alarm_screen_timer_handler(
   (void)context;
   s_alarm_screen_timer = NULL;
 
+  debug_log_event(
+    NASU_DBG_UI_TO_PILLS,
+    (uint16_t)(uint8_t)s_scroll.snap_index,
+    (uint16_t)INTAKE_ROW_COUNT,
+    s_alarm_active ? 1u : 0u
+  );
+
   if (
     !s_canvas_layer ||
     s_transfer_screen_active ||
@@ -1147,6 +1210,13 @@ static void alarm_screen_timer_handler(
 }
 
 void medication_ui_begin_alarm_sequence(void) {
+  debug_log_event(
+    NASU_DBG_UI_ALARM_BEGIN,
+    (uint16_t)INTAKE_ROW_COUNT,
+    (uint16_t)(uint8_t)s_scroll.snap_index,
+    s_alarm_active ? 1u : 0u
+  );
+
   cancel_timer(&s_alarm_screen_timer);
   medication_ui_cancel_post_confirmation_close();
   s_refresh_after_vespa_scroll = false;
@@ -1205,6 +1275,13 @@ void medication_ui_begin_alarm_sequence(void) {
 }
 
 void medication_ui_return_to_vespa_after_confirmation(void) {
+  debug_log_event(
+    NASU_DBG_UI_TO_VESPA,
+    (uint16_t)(uint8_t)s_scroll.snap_index,
+    (uint16_t)INTAKE_ROW_COUNT,
+    s_alarm_navigation_locked ? 1u : 0u
+  );
+
   cancel_timer(&s_alarm_screen_timer);
   medication_ui_cancel_post_confirmation_close();
   s_alarm_transitioning_to_pills = false;
@@ -1228,6 +1305,17 @@ void medication_ui_return_to_vespa_after_confirmation(void) {
 }
 
 void medication_ui_scroll_settled(void) {
+  debug_log_event(
+    NASU_DBG_UI_SETTLED,
+    (uint16_t)(uint8_t)s_scroll.snap_index,
+    (uint16_t)INTAKE_ROW_COUNT,
+    (uint16_t)(
+      (s_alarm_active ? 1u : 0u) |
+      (s_alarm_navigation_locked ? 2u : 0u) |
+      (s_refresh_after_vespa_scroll ? 4u : 0u)
+    )
+  );
+
   if (
     s_alarm_transitioning_to_pills &&
     s_scroll.snap_index == 0
@@ -1269,7 +1357,7 @@ void medication_ui_scroll_settled(void) {
   /*
    * Dieser Pfad wird nur erreicht, wenn der automatische Rückscroll nach
    * einer erfolgreichen letzten Bestätigung auf der Vespa eingerastet ist.
-   * Deshalb hier direkt den 10-Sekunden-Timer starten.
+   * Deshalb hier direkt den 5-Sekunden-Timer starten.
    */
   schedule_post_confirmation_close();
 }
@@ -1386,9 +1474,31 @@ void refresh_app_screen_state(void) {
       s_confirmed_screen_active != show_confirmed_screen;
   s_confirmed_screen_active = show_confirmed_screen;
 
+  debug_log_event(
+    NASU_DBG_REFRESH_BEGIN,
+    (uint16_t)s_medication_count,
+    alarm_visual_medication_mask(),
+    s_alarm_active ? 1u : 0u
+  );
+
   rebuild_medication_rows();
   rebuild_all_medication_rows();
+
+  debug_log_event(
+    NASU_DBG_ROWS_READY,
+    (uint16_t)INTAKE_ROW_COUNT,
+    (uint16_t)LIST_ROW_COUNT,
+    alarm_visual_medication_mask()
+  );
+
   pill_physics_rebuild();
+
+  debug_log_event(
+    NASU_DBG_PHYSICS_READY,
+    (uint16_t)pill_physics_body_count(),
+    (uint16_t)INTAKE_ROW_COUNT,
+    0
+  );
 
   if (!s_canvas_layer) {
     return;

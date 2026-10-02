@@ -646,7 +646,7 @@ static bool medication_settings_valid(
         MEDICATION_SCHEDULE_MONTHLY ||
     settings->symbol >
         MEDICATION_SYMBOL_PEN ||
-    settings->shape > 3 ||
+    settings->shape > 4 ||
     settings->color < 192 ||
     settings->icon_set > 1 ||
     settings->enabled > 1 ||
@@ -1318,7 +1318,29 @@ static void load_medication_settings(void) {
     sizeof(s_medications)
   );
 
+  const bool current_list_present =
+      persist_exists(
+        MEDICATION_COUNT_PERSIST_KEY
+      );
+
   if (load_current_medication_list()) {
+    return;
+  }
+
+  /*
+   * Never destroy an existing current-format medication list merely because
+   * one entry failed validation or could not be read. The phone still owns
+   * the configuration and can resend it. Default Xarelto is only appropriate
+   * for a genuinely fresh/legacy installation.
+   */
+  if (current_list_present) {
+    APP_LOG(
+      APP_LOG_LEVEL_ERROR,
+      "Stored medication list invalid; keeping storage untouched"
+    );
+
+    s_medication_count = 0;
+    rebuild_medication_rows();
     return;
   }
 
