@@ -44,7 +44,10 @@
       "SHOW_JAPANESE_PATTERN": 30,
       "MED_INTERVAL_START_HOUR": 31,
       "MED_INTERVAL_START_MINUTE": 32,
-      "MED_ALARM_MINUTE": 33
+      "MED_ALARM_MINUTE": 33,
+      "MED_EVERY_START_YEAR": 34,
+      "MED_EVERY_START_MONTH": 35,
+      "MED_EVERY_START_DAY": 36
     },
     "projectType": "native",
     "resources": {
