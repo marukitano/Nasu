@@ -122,6 +122,7 @@
 #define LANGUAGE_PERSIST_KEY 209
 #define SHOW_JAPANESE_PATTERN_PERSIST_KEY 212
 #define MEDICATION_INTERVAL_SETTINGS_PERSIST_KEY 213
+#define MEDICATION_EVERY_DAYS_SETTINGS_PERSIST_KEY 217
 /* Legacy split alarm-state keys, read only during migration. */
 #define INTERVAL_ALARM_STATE_PERSIST_KEY 214
 #define MEDICATION_ALARM_MINUTES_PERSIST_KEY 215
@@ -215,7 +216,8 @@ typedef enum {
 typedef enum {
   MEDICATION_SCHEDULE_DAILY,
   MEDICATION_SCHEDULE_WEEKLY,
-  MEDICATION_SCHEDULE_MONTHLY
+  MEDICATION_SCHEDULE_MONTHLY,
+  MEDICATION_SCHEDULE_EVERY_DAYS
 } MedicationSchedule;
 
 typedef enum {
@@ -272,6 +274,12 @@ typedef struct {
   uint8_t start_hour;
   uint8_t start_minute;
 } MedicationIntervalSettings;
+
+typedef struct {
+  uint16_t start_year;
+  uint8_t start_month;
+  uint8_t start_day;
+} MedicationEveryDaysSettings;
 
 typedef struct {
   uint16_t morning;
