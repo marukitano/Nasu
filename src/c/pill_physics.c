@@ -14,7 +14,7 @@
 #include "confirmation_ui.h"
 #include "medication_ui.h"
 
-#define NASU_DIAGNOSTIC_STATIC_PILLS 1
+#define NASU_DIAGNOSTIC_STATIC_PILLS 0
 
 /*
  * Limit display-plane gravity to sin(45 degrees) ~= 0.707 g. Tilting the
