@@ -71,7 +71,42 @@ static MedicationTime medication_time_for_minute(
   return MEDICATION_TIME_NIGHT;
 }
 
+static int32_t civil_day_number(
+    int year,
+    unsigned int month,
+    unsigned int day
+) {
+  year -= month <= 2;
+
+  const int era =
+      (year >= 0 ? year : year - 399) / 400;
+  const unsigned int year_of_era =
+      (unsigned int)(year - era * 400);
+  const unsigned int shifted_month =
+      month > 2
+          ? month - 3u
+          : month + 9u;
+  const unsigned int day_of_year =
+      (
+        153u * shifted_month +
+        2u
+      ) /
+      5u +
+      day -
+      1u;
+  const unsigned int day_of_era =
+      year_of_era * 365u +
+      year_of_era / 4u -
+      year_of_era / 100u +
+      day_of_year;
+
+  return
+      era * 146097 +
+      (int32_t)day_of_era;
+}
+
 bool medication_is_scheduled_on_date(
+    uint8_t medication_index,
     const MedicationSettings *medication,
     const struct tm *local_date
 ) {
@@ -107,6 +142,50 @@ bool medication_is_scheduled_on_date(
   ) {
     return medication->day ==
         local_date->tm_mday;
+  }
+
+  if (
+    medication->schedule ==
+        MEDICATION_SCHEDULE_EVERY_DAYS
+  ) {
+    if (medication->day < 2) {
+      return false;
+    }
+
+    const MedicationEveryDaysSettings *settings =
+        medication_every_days_settings_at(
+          medication_index
+        );
+
+    if (
+      !settings ||
+      settings->start_year < 2000 ||
+      settings->start_month < 1 ||
+      settings->start_month > 12 ||
+      settings->start_day < 1 ||
+      settings->start_day > 31
+    ) {
+      return false;
+    }
+
+    const int32_t start_day =
+        civil_day_number(
+          settings->start_year,
+          settings->start_month,
+          settings->start_day
+        );
+    const int32_t current_day =
+        civil_day_number(
+          local_date->tm_year + 1900,
+          (unsigned int)local_date->tm_mon + 1u,
+          (unsigned int)local_date->tm_mday
+        );
+    const int32_t elapsed_days =
+        current_day - start_day;
+
+    return
+        elapsed_days >= 0 &&
+        elapsed_days % medication->day == 0;
   }
 
   return false;

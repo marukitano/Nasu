@@ -4,6 +4,7 @@
 
 /* Medication grouping, dayparts and visible rows. */
 bool medication_is_scheduled_on_date(
+    uint8_t medication_index,
     const MedicationSettings *medication,
     const struct tm *local_date
 );

@@ -1021,6 +1021,7 @@ static bool regular_alarm_timestamp_for_window(
 
   if (
     !medication_is_scheduled_on_date(
+      medication_index,
       medication,
       &schedule_date
     )

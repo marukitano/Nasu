@@ -6,5 +6,8 @@
 const MedicationIntervalSettings *medication_interval_settings_at(
     uint8_t medication_index
 );
+const MedicationEveryDaysSettings *medication_every_days_settings_at(
+    uint8_t medication_index
+);
 void watch_settings_init(void);
 void watch_settings_deinit(void);
