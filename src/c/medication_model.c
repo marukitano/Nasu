@@ -82,13 +82,13 @@ static int32_t civil_day_number(
       (year >= 0 ? year : year - 399) / 400;
   const unsigned int year_of_era =
       (unsigned int)(year - era * 400);
+  const unsigned int shifted_month =
+      month > 2
+          ? month - 3u
+          : month + 9u;
   const unsigned int day_of_year =
       (
-        153u *
-        (
-          month +
-          (month > 2 ? (unsigned int)-3 : 9u)
-        ) +
+        153u * shifted_month +
         2u
       ) /
       5u +
