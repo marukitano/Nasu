@@ -14,7 +14,8 @@
 #include "confirmation_ui.h"
 #include "medication_ui.h"
 
-#define NASU_DIAGNOSTIC_PHYSICS_NO_ACCEL 1
+#define NASU_DIAGNOSTIC_PHYSICS_NO_ACCEL 0
+#define NASU_DIAGNOSTIC_ACCEL_EMPTY_HANDLER 1
 
 /*
  * Limit display-plane gravity to sin(45 degrees) ~= 0.707 g. Tilting the
@@ -61,7 +62,7 @@ static uint8_t s_pill_physics_sensor_quiet_samples;
  * at most three seconds. Afterwards sensor data must be accepted again,
  * otherwise pill physics can remain asleep until the watch is rebooted.
  */
-#define PILL_PHYSICS_VIBRATION_FLAG_MAX_SAMPLES 75
+#define PILL_PHYSICS_VIBRATION_FLAG_MAX_SAMPLES 30
 static uint8_t s_pill_physics_vibration_flag_samples;
 
 static bool pill_physics_medication_is_visible(
@@ -2035,115 +2036,15 @@ static void pill_physics_accel_handler(
     AccelData *data,
     uint32_t num_samples
 ) {
-  if (!data || num_samples == 0) {
-    return;
-  }
-
-  const AccelData sample = data[num_samples - 1];
-
-  if (sample.did_vibrate) {
-    if (
-      s_pill_physics_vibration_flag_samples <
-          PILL_PHYSICS_VIBRATION_FLAG_MAX_SAMPLES
-    ) {
-      s_pill_physics_vibration_flag_samples++;
-
-      if (
-        s_pill_physics_vibration_flag_samples <
-            PILL_PHYSICS_VIBRATION_FLAG_MAX_SAMPLES
-      ) {
-        return;
-      }
-
-      APP_LOG(
-        APP_LOG_LEVEL_WARNING,
-        "did_vibrate stuck; resuming pill accelerometer"
-      );
-    }
-  } else {
-    s_pill_physics_vibration_flag_samples = 0;
-  }
-
-  if (
-    s_confirmed_screen_active ||
-    s_transfer_screen_active ||
-    s_pill_physics_body_count == 0
-  ) {
-    return;
-  }
-
-  const int16_t target_x = sample.x;
-  const int16_t target_y = (int16_t)-sample.y;
-  const int16_t old_magnitude =
-      pill_rb_tilt_magnitude(
-        s_pill_physics_gravity_x,
-        s_pill_physics_gravity_y
-      );
-  s_pill_physics_gravity_x = (int16_t)(
-    (s_pill_physics_gravity_x + target_x * 5) / 6
-  );
-  s_pill_physics_gravity_y = (int16_t)(
-    (s_pill_physics_gravity_y + target_y * 5) / 6
-  );
-
-  const int16_t new_magnitude =
-      pill_rb_tilt_magnitude(
-        s_pill_physics_gravity_x,
-        s_pill_physics_gravity_y
-      );
   /*
-   * Hysteresis prevents filtered sensor noise around the nominal 50 mg
-   * threshold from repeatedly waking and sleeping a settled pile. Individual
-   * pills vary slightly around that threshold; the wake event still uses the
-   * shared wider 40/60 mg band.
+   * Diagnostic A/B build:
+   * Keep Pebble's accelerometer service subscribed at 10 Hz, but do not
+   * inspect or process any samples. If this still crashes, the problem is
+   * outside the tilt/rigid-body calculations.
    */
-  const bool entered_drive_band =
-      old_magnitude <=
-          PILL_RB_TILT_DEADZONE_MG +
-          PILL_RB_TILT_WAKE_HYSTERESIS_MG &&
-      new_magnitude >
-          PILL_RB_TILT_DEADZONE_MG +
-          PILL_RB_TILT_WAKE_HYSTERESIS_MG;
-  const bool left_drive_band =
-      old_magnitude >=
-          PILL_RB_TILT_DEADZONE_MG -
-          PILL_RB_TILT_WAKE_HYSTERESIS_MG &&
-      new_magnitude <
-          PILL_RB_TILT_DEADZONE_MG -
-          PILL_RB_TILT_WAKE_HYSTERESIS_MG;
-  const bool deadzone_crossed =
-      entered_drive_band ||
-      left_drive_band;
-  const bool meaningful_change =
-      deadzone_crossed ||
-      abs_int32(
-        (int32_t)s_pill_physics_gravity_x -
-        s_pill_physics_last_target_x
-      ) >= PILL_RB_SENSOR_WAKE_MG ||
-      abs_int32(
-        (int32_t)s_pill_physics_gravity_y -
-        s_pill_physics_last_target_y
-      ) >= PILL_RB_SENSOR_WAKE_MG;
-
-  if (!meaningful_change) {
-    if (s_pill_physics_sensor_quiet_samples < 255) {
-      s_pill_physics_sensor_quiet_samples++;
-    }
-    return;
-  }
-
-  s_pill_physics_last_target_x =
-      s_pill_physics_gravity_x;
-  s_pill_physics_last_target_y =
-      s_pill_physics_gravity_y;
-  s_pill_physics_sensor_quiet_samples = 0;
-  s_pill_physics_quiet_frames = 0;
-
-  if (!s_pill_physics_timer) {
-    pill_physics_update_activity();
-  }
+  (void)data;
+  (void)num_samples;
 }
-
 void pill_physics_set_window_visible(
     bool visible
 ) {
@@ -2204,7 +2105,7 @@ void pill_physics_update_activity(void) {
 #else
   if (!s_pill_physics_accel_subscribed) {
     accel_service_set_sampling_rate(
-      ACCEL_SAMPLING_25HZ
+      ACCEL_SAMPLING_10HZ
     );
     accel_data_service_subscribe(
       1,
