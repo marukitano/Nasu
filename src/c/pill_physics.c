@@ -14,7 +14,7 @@
 #include "confirmation_ui.h"
 #include "medication_ui.h"
 
-#define NASU_DIAGNOSTIC_STATIC_PILLS 1
+#define NASU_DIAGNOSTIC_PHYSICS_NO_ACCEL 1
 
 /*
  * Limit display-plane gravity to sin(45 degrees) ~= 0.707 g. Tilting the
@@ -975,10 +975,22 @@ void pill_physics_rebuild(void) {
     }
   }
 
+#if NASU_DIAGNOSTIC_PHYSICS_NO_ACCEL
+  /*
+   * Synthetic tilt for this diagnostic build.
+   * Movement, wall contacts and pill/pill collisions remain active while
+   * the accelerometer service is completely absent.
+   */
+  s_pill_physics_gravity_x = 180;
+  s_pill_physics_gravity_y = 500;
+  s_pill_physics_last_target_x = 180;
+  s_pill_physics_last_target_y = 500;
+#else
   s_pill_physics_gravity_x = 0;
   s_pill_physics_gravity_y = 0;
   s_pill_physics_last_target_x = 0;
   s_pill_physics_last_target_y = 0;
+#endif
   s_pill_physics_quiet_frames = 0;
   s_pill_physics_sensor_quiet_samples = 0;
 
@@ -2162,43 +2174,34 @@ void pill_physics_stop(void) {
 }
 
 void pill_physics_update_activity(void) {
-#if NASU_DIAGNOSTIC_STATIC_PILLS
-  /*
-   * A/B diagnostic build:
-   * Keep all PillPhysicsBody objects intact for rendering, but run
-   * neither the physics timer nor accelerometer callbacks.
-   */
-  cancel_timer(&s_pill_physics_timer);
-
-  if (s_pill_physics_accel_subscribed) {
-    accel_data_service_unsubscribe();
-    s_pill_physics_accel_subscribed = false;
-  }
-
-  return;
-#endif
-
   const bool physics_should_run =
       s_pill_physics_window_visible &&
       !s_confirmed_screen_active &&
       !s_transfer_screen_active &&
       s_pill_physics_body_count > 0;
 
-  const bool accel_should_run =
-      physics_should_run;
-
   if (!physics_should_run) {
     cancel_timer(&s_pill_physics_timer);
-  }
 
-  if (!accel_should_run) {
     if (s_pill_physics_accel_subscribed) {
       accel_data_service_unsubscribe();
       s_pill_physics_accel_subscribed = false;
     }
+
     return;
   }
 
+#if NASU_DIAGNOSTIC_PHYSICS_NO_ACCEL
+  /*
+   * A/B diagnostic build:
+   * Run the complete rigid-body physics timer, but never subscribe to
+   * Pebble's accelerometer service.
+   */
+  if (s_pill_physics_accel_subscribed) {
+    accel_data_service_unsubscribe();
+    s_pill_physics_accel_subscribed = false;
+  }
+#else
   if (!s_pill_physics_accel_subscribed) {
     accel_service_set_sampling_rate(
       ACCEL_SAMPLING_25HZ
@@ -2209,11 +2212,9 @@ void pill_physics_update_activity(void) {
     );
     s_pill_physics_accel_subscribed = true;
   }
+#endif
 
-  if (
-    physics_should_run &&
-    !s_pill_physics_timer
-  ) {
+  if (!s_pill_physics_timer) {
     s_pill_physics_quiet_frames = 0;
     pill_physics_schedule_tick(
       s_alarm_active
