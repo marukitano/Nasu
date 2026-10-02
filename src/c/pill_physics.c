@@ -2068,10 +2068,11 @@ const PillPhysicsBody *pill_physics_body_at(
 void pill_physics_stop(void) {
   cancel_timer(&s_pill_physics_timer);
 
-  if (s_pill_physics_accel_subscribed) {
-    accel_data_service_unsubscribe();
-    s_pill_physics_accel_subscribed = false;
-  }
+  /*
+   * Diagnostic: keep the accelerometer subscription alive for the complete
+   * process lifetime. The OS tears it down when the app exits. This isolates
+   * accel_data_service_unsubscribe() as a potential crash source.
+   */
 }
 
 void pill_physics_update_activity(void) {
@@ -2083,12 +2084,6 @@ void pill_physics_update_activity(void) {
 
   if (!physics_should_run) {
     cancel_timer(&s_pill_physics_timer);
-
-    if (s_pill_physics_accel_subscribed) {
-      accel_data_service_unsubscribe();
-      s_pill_physics_accel_subscribed = false;
-    }
-
     return;
   }
 
