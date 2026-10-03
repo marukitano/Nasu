@@ -29,10 +29,12 @@ Medikamente bestätigt sind.
 
 ### Funktionen
 
-- Bis zu **8 Medikamente**
+- Bis zu **16 Medikamente**
 - Tabletten und **Injektionspens**
 - Tägliche, wöchentliche, monatliche und frei konfigurierbare „alle X Tage“-Einnahmepläne
 - Vier konfigurierbare Tageszeiten: Früh, Mittag, Abend und Nacht
+- Alternativ Einnahmen alle **2, 3, 4, 6, 8 oder 12 Stunden** mit einstellbarer Startzeit
+- Medikamente auf dem Smartphone kopieren und per Ziehen umordnen
 - Einstellbare Tablettenform, Farbe, Größe und Beschriftung
 - Einstellbare Farben für Pen und Akzent
 - Realistische Pillensimulation: Die konfigurierten Medikamente liegen als physikalische Objekte auf dem Erinnerungsbildschirm und reagieren auf die Bewegung der Uhr
@@ -77,6 +79,11 @@ Für Medikamente lassen sich **tägliche, wöchentliche, monatliche und
 **2–255 Kalendertage**, ein Startdatum und eine Tageszeit einstellbar –
 beispielsweise alle 10 Tage. Die Termine werden vom Startdatum aus berechnet.
 
+Alternativ zur Einnahme zu einer Tageszeit kann **Intervall** gewählt werden:
+alle **2, 3, 4, 6, 8 oder 12 Stunden** ab einer einstellbaren Startzeit.
+Dieser Modus ersetzt den täglichen, wöchentlichen, monatlichen oder
+„alle X Tage“-Rhythmus.
+
 Eine Einnahme wird nicht durch einen kurzen versehentlichen Tastendruck
 bestätigt. Stattdessen ist bewusstes Gedrückthalten mit visueller
 Rückmeldung erforderlich.
@@ -92,7 +99,7 @@ Pro Medikament lassen sich unter anderem einstellen:
 - Wirkung / Beschreibung
 - Dosierung
 - Menge
-- Tageszeit
+- Tageszeit oder Stundenintervall mit Startzeit
 - Täglicher, wöchentlicher, monatlicher oder „alle X Tage“-Rhythmus (2–255 Tage, mit Startdatum)
 - Tablette oder Injektionspen
 - Aussehen
@@ -209,10 +216,12 @@ stays with you until the medication that is due has been confirmed.
 
 ### Features
 
-- Up to **8 medications**
+- Up to **16 medications**
 - Pills and **injection pens**
 - Daily, weekly, monthly and configurable every-X-days schedules
 - Four configurable dayparts: morning, noon, evening and night
+- Alternatively, intake every **2, 3, 4, 6, 8 or 12 hours** with a configurable start time
+- Copy medications and reorder them by dragging on your phone
 - Configurable pill shape, color, size and imprint
 - Configurable pen body and accent colors
 - Realistic pill simulation: configured medications appear as physical objects on the reminder screen and react to movement of the watch
@@ -256,6 +265,10 @@ Every-X-days schedules support **2–255 calendar days**, a start date and
 a daypart—for example, every 10 days. Scheduled dates are calculated
 from the start date.
 
+Alternatively, select **Interval** instead of a daypart: every
+**2, 3, 4, 6, 8 or 12 hours** from a configurable start time. This mode
+replaces the daily, weekly, monthly or every-X-days schedule.
+
 Medication is not marked as taken by a short accidental button press.
 Confirmation requires a deliberate press-and-hold action with visual
 feedback.
@@ -271,7 +284,7 @@ For each medication you can configure:
 - Effect / description
 - Dosage
 - Quantity
-- Daypart
+- Daypart or hourly interval with a start time
 - Daily, weekly, monthly or every-X-days schedule (2–255 days, with a start date)
 - Pill or injection pen
 - Appearance
