@@ -31,7 +31,7 @@ Medikamente bestätigt sind.
 
 - Bis zu **8 Medikamente**
 - Tabletten und **Injektionspens**
-- Tägliche, wöchentliche und monatliche Einnahmepläne
+- Tägliche, wöchentliche, monatliche und frei konfigurierbare „alle X Tage“-Einnahmepläne
 - Vier konfigurierbare Tageszeiten: Früh, Mittag, Abend und Nacht
 - Einstellbare Tablettenform, Farbe, Größe und Beschriftung
 - Einstellbare Farben für Pen und Akzent
@@ -72,10 +72,10 @@ zeigt Nasu einen animierten Pen mit den konfigurierten Farben. Sind
 Tabletten und ein Pen gleichzeitig fällig, werden sie als getrennte
 Bestätigungsgruppen angezeigt.
 
-Für Medikamente lassen sich **tägliche, wöchentliche und monatliche
-Einnahmepläne** konfigurieren. Dadurch eignet sich Nasu sowohl für
-regelmäßige tägliche Medikamente als auch für Präparate, die nur an
-bestimmten Wochentagen oder einmal pro Monat genommen werden.
+Für Medikamente lassen sich **tägliche, wöchentliche, monatliche und
+„alle X Tage“-Einnahmepläne** konfigurieren. Für „alle X Tage“ sind
+**2–255 Kalendertage**, ein Startdatum und eine Tageszeit einstellbar –
+beispielsweise alle 10 Tage. Die Termine werden vom Startdatum aus berechnet.
 
 Eine Einnahme wird nicht durch einen kurzen versehentlichen Tastendruck
 bestätigt. Stattdessen ist bewusstes Gedrückthalten mit visueller
@@ -93,7 +93,7 @@ Pro Medikament lassen sich unter anderem einstellen:
 - Dosierung
 - Menge
 - Tageszeit
-- Täglicher, wöchentlicher oder monatlicher Rhythmus
+- Täglicher, wöchentlicher, monatlicher oder „alle X Tage“-Rhythmus (2–255 Tage, mit Startdatum)
 - Tablette oder Injektionspen
 - Aussehen
 - Aktiv / inaktiv
@@ -211,7 +211,7 @@ stays with you until the medication that is due has been confirmed.
 
 - Up to **8 medications**
 - Pills and **injection pens**
-- Daily, weekly and monthly schedules
+- Daily, weekly, monthly and configurable every-X-days schedules
 - Four configurable dayparts: morning, noon, evening and night
 - Configurable pill shape, color, size and imprint
 - Configurable pen body and accent colors
@@ -251,9 +251,10 @@ shows an animated pen using the configured colors. If pills and a pen
 are due at the same time, they are presented as separate confirmation
 groups.
 
-Medication can be scheduled **daily, weekly or monthly**, so Nasu works
-both for regular everyday medication and for treatments that are only
-taken on selected weekdays or once per month.
+Medication can be scheduled **daily, weekly, monthly or every X days**.
+Every-X-days schedules support **2–255 calendar days**, a start date and
+a daypart—for example, every 10 days. Scheduled dates are calculated
+from the start date.
 
 Medication is not marked as taken by a short accidental button press.
 Confirmation requires a deliberate press-and-hold action with visual
@@ -271,7 +272,7 @@ For each medication you can configure:
 - Dosage
 - Quantity
 - Daypart
-- Daily, weekly or monthly schedule
+- Daily, weekly, monthly or every-X-days schedule (2–255 days, with a start date)
 - Pill or injection pen
 - Appearance
 - Active / inactive state
