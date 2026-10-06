@@ -1,5 +1,9 @@
 # Nasu
 
+<p align="center">
+  <img src="docs/store-preview.jpg" alt="Nasu on Pebble Time 2" width="600">
+</p>
+
 ## Deutsch
 
 **Nasu** ist eine native Medikamenten-Erinnerungs-App für die
