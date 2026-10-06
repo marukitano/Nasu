@@ -1,7 +1,7 @@
 # Nasu
 
 <p align="center">
-  <img src="docs/store-preview.jpg" alt="Nasu on Pebble Time 2" width="600">
+  <img src="docs/nasu.png" alt="Nasu on Pebble Time 2" width="600">
 </p>
 
 ## Deutsch
