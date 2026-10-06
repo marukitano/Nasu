@@ -25,11 +25,6 @@ daran, deine Medikamente zu nehmen. Im Alarmfall meldet sie sich direkt,
 führt dich zum Einnahmebildschirm und bleibt bei dir, bis die fälligen
 Medikamente bestätigt sind.
 
-<p align="center">
-  <img src="docs/screenshots/screenshot.png" width="30%" alt="Nasu – screenshot">
-  <img src="docs/screenshots/screenshot2.png" width="30%" alt="Nasu – screenshot2">
-  <img src="docs/screenshots/screenshot3.png" width="30%" alt="Nasu – screenshot3">
-</p>
 
 ### Funktionen
 
@@ -148,7 +143,6 @@ pebble install --phone WATCH_IP
 package.json
 resources/
 docs/
-└── screenshots/
 src/
 ├── c/
 │   ├── main.c
@@ -212,11 +206,6 @@ She accompanies you on her Vespa and reminds you to take your
 medication. When an alarm fires, she leads you to the intake screen and
 stays with you until the medication that is due has been confirmed.
 
-<p align="center">
-  <img src="docs/screenshots/screenshot.png" width="30%" alt="Nasu – screenshot">
-  <img src="docs/screenshots/screenshot2.png" width="30%" alt="Nasu – screenshot2">
-  <img src="docs/screenshots/screenshot3.png" width="30%" alt="Nasu – screenshot3">
-</p>
 
 ### Features
 
@@ -333,7 +322,6 @@ pebble install --phone WATCH_IP
 package.json
 resources/
 docs/
-└── screenshots/
 src/
 ├── c/
 │   ├── main.c
