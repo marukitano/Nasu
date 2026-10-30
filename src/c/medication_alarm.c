@@ -19,6 +19,7 @@
 #define ALARM_EVENT_COOKIE_BASE 0x4E530000u
 #define ALARM_EVENT_COOKIE_PREFIX_MASK 0xFFFF0000u
 #define MAX_PENDING_ALARM_GROUPS 32
+#define PENDING_ALARM_GROUPS_PER_BLOCK 16
 #define PENDING_ALARM_STORE_VERSION 1
 
 static AppTimer *s_alarm_intro_timer;
@@ -43,9 +44,9 @@ typedef struct {
 typedef struct {
   uint16_t version;
   uint8_t count;
-  uint8_t reserved;
-  PendingAlarmGroup groups[MAX_PENDING_ALARM_GROUPS];
-} PendingAlarmStore;
+  uint8_t block_index;
+  PendingAlarmGroup groups[PENDING_ALARM_GROUPS_PER_BLOCK];
+} PendingAlarmStoreBlock;
 
 typedef struct {
   time_t timestamp;
@@ -218,29 +219,103 @@ static bool alarm_event_cookie_decode(
 }
 
 
-static bool persist_pending_alarm_groups(void) {
-  PendingAlarmStore store;
+static bool persist_pending_alarm_group_block(
+    uint32_t persist_key,
+    uint8_t block_index,
+    uint8_t start_index
+) {
+  PendingAlarmStoreBlock store;
   memset(&store, 0, sizeof(store));
 
   store.version = PENDING_ALARM_STORE_VERSION;
-  store.count = s_pending_alarm_group_count;
+  store.block_index = block_index;
 
-  if (store.count > MAX_PENDING_ALARM_GROUPS) {
-    store.count = MAX_PENDING_ALARM_GROUPS;
+  if (start_index < s_pending_alarm_group_count) {
+    const uint8_t remaining =
+        (uint8_t)(
+          s_pending_alarm_group_count -
+          start_index
+        );
+    store.count =
+        remaining > PENDING_ALARM_GROUPS_PER_BLOCK
+            ? PENDING_ALARM_GROUPS_PER_BLOCK
+            : remaining;
+
+    memcpy(
+      store.groups,
+      &s_pending_alarm_groups[start_index],
+      (size_t)store.count *
+          sizeof(PendingAlarmGroup)
+    );
   }
-
-  memcpy(
-    store.groups,
-    s_pending_alarm_groups,
-    sizeof(s_pending_alarm_groups)
-  );
 
   return
       persist_write_data(
-        PENDING_ALARM_GROUPS_PERSIST_KEY,
+        persist_key,
         &store,
         sizeof(store)
       ) == (int)sizeof(store);
+}
+
+static bool persist_pending_alarm_groups(void) {
+  return
+      persist_pending_alarm_group_block(
+        PENDING_ALARM_GROUPS_PERSIST_KEY,
+        0,
+        0
+      ) &&
+      persist_pending_alarm_group_block(
+        PENDING_ALARM_GROUPS_PERSIST_KEY_2,
+        1,
+        PENDING_ALARM_GROUPS_PER_BLOCK
+      );
+}
+
+static bool pending_alarm_group_block_load(
+    uint32_t persist_key,
+    uint8_t expected_block_index,
+    uint8_t destination_index,
+    uint8_t *loaded_count
+) {
+  if (loaded_count) {
+    *loaded_count = 0;
+  }
+
+  PendingAlarmStoreBlock store;
+  memset(&store, 0, sizeof(store));
+
+  if (
+    !persist_exists(persist_key) ||
+    persist_get_size(persist_key) !=
+        (int)sizeof(store) ||
+    persist_read_data(
+      persist_key,
+      &store,
+      sizeof(store)
+    ) != (int)sizeof(store) ||
+    store.version != PENDING_ALARM_STORE_VERSION ||
+    store.block_index != expected_block_index ||
+    store.count > PENDING_ALARM_GROUPS_PER_BLOCK ||
+    destination_index + store.count >
+        MAX_PENDING_ALARM_GROUPS
+  ) {
+    return false;
+  }
+
+  if (store.count > 0) {
+    memcpy(
+      &s_pending_alarm_groups[destination_index],
+      store.groups,
+      (size_t)store.count *
+          sizeof(PendingAlarmGroup)
+    );
+  }
+
+  if (loaded_count) {
+    *loaded_count = store.count;
+  }
+
+  return true;
 }
 
 static void pending_alarm_groups_load(void) {
@@ -256,30 +331,40 @@ static void pending_alarm_groups_load(void) {
   s_pending_alarm_group_count = 0;
   s_pending_alarm_groups_loaded = true;
 
-  PendingAlarmStore store;
-  memset(&store, 0, sizeof(store));
+  uint8_t first_count = 0;
+  uint8_t second_count = 0;
 
-  if (
-    !persist_exists(PENDING_ALARM_GROUPS_PERSIST_KEY) ||
-    persist_get_size(PENDING_ALARM_GROUPS_PERSIST_KEY) !=
-        (int)sizeof(store) ||
-    persist_read_data(
-      PENDING_ALARM_GROUPS_PERSIST_KEY,
-      &store,
-      sizeof(store)
-    ) != (int)sizeof(store) ||
-    store.version != PENDING_ALARM_STORE_VERSION ||
-    store.count > MAX_PENDING_ALARM_GROUPS
-  ) {
+  const bool first_valid =
+      pending_alarm_group_block_load(
+        PENDING_ALARM_GROUPS_PERSIST_KEY,
+        0,
+        0,
+        &first_count
+      );
+
+  if (!first_valid) {
     return;
   }
 
-  s_pending_alarm_group_count = store.count;
-  memcpy(
-    s_pending_alarm_groups,
-    store.groups,
-    sizeof(s_pending_alarm_groups)
-  );
+  const bool second_valid =
+      pending_alarm_group_block_load(
+        PENDING_ALARM_GROUPS_PERSIST_KEY_2,
+        1,
+        first_count,
+        &second_count
+      );
+
+  if (!second_valid) {
+    memset(
+      s_pending_alarm_groups,
+      0,
+      sizeof(s_pending_alarm_groups)
+    );
+    return;
+  }
+
+  s_pending_alarm_group_count =
+      (uint8_t)(first_count + second_count);
 
   bool changed = false;
 
