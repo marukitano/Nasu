@@ -145,7 +145,8 @@ static bool alarm_event_cookie_decode(
 );
 static void record_alarm_reminder_at(
     time_t timestamp,
-    uint16_t medication_mask
+    uint16_t medication_mask,
+    time_t occurrence_start
 );
 static void alarm_start_for_request(
     uint16_t requested_mask
