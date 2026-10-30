@@ -2054,35 +2054,6 @@ static AlarmEvent next_scheduled_occurrence_after(
   return best;
 }
 
-static time_t next_reminder_timestamp_for_state(
-    time_t now,
-    time_t occurrence_start,
-    time_t occurrence_end,
-    const MedicationAlarmState *state
-) {
-  time_t candidate =
-      reminder_due_timestamp_for_state(
-        occurrence_start,
-        occurrence_end,
-        state
-      );
-
-  if (candidate <= 0) {
-    return 0;
-  }
-
-  if (candidate <= now) {
-    candidate =
-        ((now / 60) + 1) * 60;
-  }
-
-  return
-      candidate > now &&
-      candidate < occurrence_end
-          ? candidate
-          : 0;
-}
-
 static AlarmEvent next_open_reminder_after(
     time_t now
 ) {
