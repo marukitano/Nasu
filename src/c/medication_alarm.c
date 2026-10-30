@@ -18,6 +18,8 @@
 #define ALARM_VISUAL_LEAD_IN_MS 160
 #define ALARM_EVENT_COOKIE_BASE 0x4E530000u
 #define ALARM_EVENT_COOKIE_PREFIX_MASK 0xFFFF0000u
+#define MAX_PENDING_ALARM_GROUPS 32
+#define PENDING_ALARM_STORE_VERSION 1
 
 static AppTimer *s_alarm_intro_timer;
 static bool s_alarm_visuals_are_paused;
@@ -31,6 +33,21 @@ typedef struct {
 } MedicationAlarmState;
 
 typedef struct {
+  int32_t occurrence_start;
+  int32_t last_reminder;
+  uint16_t medication_mask;
+  uint8_t symbol;
+  uint8_t reserved;
+} PendingAlarmGroup;
+
+typedef struct {
+  uint16_t version;
+  uint8_t count;
+  uint8_t reserved;
+  PendingAlarmGroup groups[MAX_PENDING_ALARM_GROUPS];
+} PendingAlarmStore;
+
+typedef struct {
   time_t timestamp;
   uint16_t medication_mask;
 } AlarmEvent;
@@ -39,7 +56,13 @@ static MedicationAlarmState
     s_medication_alarm_states[MAX_MEDICATIONS];
 static bool s_medication_alarm_states_loaded;
 
+static PendingAlarmGroup
+    s_pending_alarm_groups[MAX_PENDING_ALARM_GROUPS];
+static uint8_t s_pending_alarm_group_count;
+static bool s_pending_alarm_groups_loaded;
+
 static time_t s_alarm_stop_time;
+static time_t s_alarm_due_occurrence_start;
 static uint16_t s_alarm_due_medication_mask;
 static uint16_t s_confirmation_visual_medication_mask;
 static uint16_t s_launch_wakeup_medication_mask;
@@ -193,6 +216,501 @@ static bool alarm_event_cookie_decode(
   return true;
 }
 
+
+static bool persist_pending_alarm_groups(void) {
+  PendingAlarmStore store;
+  memset(&store, 0, sizeof(store));
+
+  store.version = PENDING_ALARM_STORE_VERSION;
+  store.count = s_pending_alarm_group_count;
+
+  if (store.count > MAX_PENDING_ALARM_GROUPS) {
+    store.count = MAX_PENDING_ALARM_GROUPS;
+  }
+
+  memcpy(
+    store.groups,
+    s_pending_alarm_groups,
+    sizeof(s_pending_alarm_groups)
+  );
+
+  return
+      persist_write_data(
+        PENDING_ALARM_GROUPS_PERSIST_KEY,
+        &store,
+        sizeof(store)
+      ) == (int)sizeof(store);
+}
+
+static void pending_alarm_groups_load(void) {
+  if (s_pending_alarm_groups_loaded) {
+    return;
+  }
+
+  memset(
+    s_pending_alarm_groups,
+    0,
+    sizeof(s_pending_alarm_groups)
+  );
+  s_pending_alarm_group_count = 0;
+  s_pending_alarm_groups_loaded = true;
+
+  PendingAlarmStore store;
+  memset(&store, 0, sizeof(store));
+
+  if (
+    !persist_exists(PENDING_ALARM_GROUPS_PERSIST_KEY) ||
+    persist_get_size(PENDING_ALARM_GROUPS_PERSIST_KEY) !=
+        (int)sizeof(store) ||
+    persist_read_data(
+      PENDING_ALARM_GROUPS_PERSIST_KEY,
+      &store,
+      sizeof(store)
+    ) != (int)sizeof(store) ||
+    store.version != PENDING_ALARM_STORE_VERSION ||
+    store.count > MAX_PENDING_ALARM_GROUPS
+  ) {
+    return;
+  }
+
+  s_pending_alarm_group_count = store.count;
+  memcpy(
+    s_pending_alarm_groups,
+    store.groups,
+    sizeof(s_pending_alarm_groups)
+  );
+
+  bool changed = false;
+
+  for (
+    uint8_t group_index = 0;
+    group_index < s_pending_alarm_group_count;
+  ) {
+    PendingAlarmGroup *group =
+        &s_pending_alarm_groups[group_index];
+    uint16_t valid_mask = 0;
+
+    for (
+      uint8_t medication_index = 0;
+      medication_index < s_medication_count;
+      medication_index++
+    ) {
+      const uint16_t bit =
+          (uint16_t)(1u << medication_index);
+
+      if (
+        (group->medication_mask & bit) != 0 &&
+        s_medications[medication_index].enabled &&
+        s_medications[medication_index].symbol ==
+            group->symbol
+      ) {
+        valid_mask |= bit;
+      }
+    }
+
+    if (
+      group->occurrence_start <= 0 ||
+      group->symbol > MEDICATION_SYMBOL_PEN ||
+      valid_mask == 0
+    ) {
+      for (
+        uint8_t move = group_index + 1;
+        move < s_pending_alarm_group_count;
+        move++
+      ) {
+        s_pending_alarm_groups[move - 1] =
+            s_pending_alarm_groups[move];
+      }
+
+      s_pending_alarm_group_count--;
+      memset(
+        &s_pending_alarm_groups[
+          s_pending_alarm_group_count
+        ],
+        0,
+        sizeof(PendingAlarmGroup)
+      );
+      changed = true;
+      continue;
+    }
+
+    if (valid_mask != group->medication_mask) {
+      group->medication_mask = valid_mask;
+      changed = true;
+    }
+
+    group_index++;
+  }
+
+  if (changed) {
+    (void)persist_pending_alarm_groups();
+  }
+}
+
+static bool reset_pending_alarm_groups(void) {
+  memset(
+    s_pending_alarm_groups,
+    0,
+    sizeof(s_pending_alarm_groups)
+  );
+  s_pending_alarm_group_count = 0;
+  s_pending_alarm_groups_loaded = true;
+  return persist_pending_alarm_groups();
+}
+
+static int pending_alarm_group_compare(
+    const PendingAlarmGroup *left,
+    const PendingAlarmGroup *right
+) {
+  if (left->occurrence_start < right->occurrence_start) {
+    return -1;
+  }
+  if (left->occurrence_start > right->occurrence_start) {
+    return 1;
+  }
+
+  if (left->symbol < right->symbol) {
+    return -1;
+  }
+  if (left->symbol > right->symbol) {
+    return 1;
+  }
+
+  if (left->medication_mask < right->medication_mask) {
+    return -1;
+  }
+  if (left->medication_mask > right->medication_mask) {
+    return 1;
+  }
+
+  return 0;
+}
+
+static void pending_alarm_groups_sort(void) {
+  for (
+    uint8_t index = 1;
+    index < s_pending_alarm_group_count;
+    index++
+  ) {
+    PendingAlarmGroup value =
+        s_pending_alarm_groups[index];
+    uint8_t insert = index;
+
+    while (
+      insert > 0 &&
+      pending_alarm_group_compare(
+        &value,
+        &s_pending_alarm_groups[insert - 1]
+      ) < 0
+    ) {
+      s_pending_alarm_groups[insert] =
+          s_pending_alarm_groups[insert - 1];
+      insert--;
+    }
+
+    s_pending_alarm_groups[insert] = value;
+  }
+}
+
+static bool pending_alarm_group_add(
+    time_t occurrence_start,
+    MedicationSymbol symbol,
+    uint16_t medication_mask
+) {
+  if (
+    occurrence_start <= 0 ||
+    medication_mask == 0
+  ) {
+    return false;
+  }
+
+  pending_alarm_groups_load();
+
+  for (
+    uint8_t index = 0;
+    index < s_pending_alarm_group_count;
+    index++
+  ) {
+    PendingAlarmGroup *group =
+        &s_pending_alarm_groups[index];
+
+    if (
+      group->occurrence_start !=
+          (int32_t)occurrence_start ||
+      group->symbol != (uint8_t)symbol
+    ) {
+      continue;
+    }
+
+    if (symbol == MEDICATION_SYMBOL_PILL) {
+      const uint16_t merged =
+          group->medication_mask |
+          medication_mask;
+
+      if (merged == group->medication_mask) {
+        return false;
+      }
+
+      group->medication_mask = merged;
+      pending_alarm_groups_sort();
+      return true;
+    }
+
+    if (group->medication_mask == medication_mask) {
+      return false;
+    }
+  }
+
+  if (
+    s_pending_alarm_group_count >=
+        MAX_PENDING_ALARM_GROUPS
+  ) {
+    APP_LOG(
+      APP_LOG_LEVEL_ERROR,
+      "Pending alarm queue full; occurrence=%ld mask=0x%04x",
+      (long)occurrence_start,
+      (unsigned int)medication_mask
+    );
+    return false;
+  }
+
+  s_pending_alarm_groups[
+    s_pending_alarm_group_count++
+  ] = (PendingAlarmGroup) {
+    .occurrence_start = (int32_t)occurrence_start,
+    .last_reminder = 0,
+    .medication_mask = medication_mask,
+    .symbol = (uint8_t)symbol,
+    .reserved = 0
+  };
+
+  pending_alarm_groups_sort();
+  return true;
+}
+
+static bool pending_alarm_capture_due_groups_at(
+    uint16_t due_medication_mask,
+    time_t timestamp
+) {
+  bool changed = false;
+
+  for (
+    uint8_t index = 0;
+    index < s_medication_count;
+    index++
+  ) {
+    const uint16_t bit =
+        (uint16_t)(1u << index);
+
+    if ((due_medication_mask & bit) == 0) {
+      continue;
+    }
+
+    time_t occurrence_start = 0;
+    MedicationAlarmState *state = NULL;
+
+    if (
+      !medication_alarm_state_at(
+        index,
+        timestamp,
+        &occurrence_start,
+        NULL,
+        &state
+      ) ||
+      !state ||
+      state->confirmed ||
+      state->suppressed
+    ) {
+      continue;
+    }
+
+    if (
+      pending_alarm_group_add(
+        occurrence_start,
+        (MedicationSymbol)s_medications[index].symbol,
+        bit
+      )
+    ) {
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    (void)persist_pending_alarm_groups();
+  }
+
+  return changed;
+}
+
+static bool pending_alarm_first_group(
+    PendingAlarmGroup *group
+) {
+  pending_alarm_groups_load();
+
+  if (s_pending_alarm_group_count == 0) {
+    return false;
+  }
+
+  if (group) {
+    *group = s_pending_alarm_groups[0];
+  }
+
+  return true;
+}
+
+static uint8_t pending_alarm_symbol_mask(void) {
+  pending_alarm_groups_load();
+
+  uint8_t symbol_mask = 0;
+
+  for (
+    uint8_t index = 0;
+    index < s_pending_alarm_group_count;
+    index++
+  ) {
+    const uint8_t symbol =
+        s_pending_alarm_groups[index].symbol;
+
+    if (symbol <= MEDICATION_SYMBOL_PEN) {
+      symbol_mask |= (uint8_t)(1u << symbol);
+    }
+  }
+
+  return symbol_mask;
+}
+
+static bool pending_alarm_front_is_due_at(
+    time_t timestamp
+) {
+  PendingAlarmGroup group;
+
+  if (!pending_alarm_first_group(&group)) {
+    return false;
+  }
+
+  const time_t due =
+      group.last_reminder < group.occurrence_start
+          ? (time_t)group.occurrence_start
+          : (time_t)group.last_reminder +
+              (time_t)s_alarm_reminder_interval_minutes *
+                  60;
+
+  return due > 0 && timestamp >= due;
+}
+
+static AlarmEvent pending_alarm_next_reminder_after(
+    time_t now
+) {
+  AlarmEvent event = { 0 };
+  PendingAlarmGroup group;
+
+  if (!pending_alarm_first_group(&group)) {
+    return event;
+  }
+
+  time_t candidate =
+      group.last_reminder < group.occurrence_start
+          ? (time_t)group.occurrence_start
+          : (time_t)group.last_reminder +
+              (time_t)s_alarm_reminder_interval_minutes *
+                  60;
+
+  if (candidate <= now) {
+    candidate = ((now / 60) + 1) * 60;
+  }
+
+  if (candidate > now) {
+    event.timestamp = candidate;
+    event.medication_mask =
+        group.medication_mask;
+  }
+
+  return event;
+}
+
+static void pending_alarm_record_reminder(
+    time_t occurrence_start,
+    uint16_t medication_mask,
+    int32_t minute_timestamp
+) {
+  pending_alarm_groups_load();
+
+  for (
+    uint8_t index = 0;
+    index < s_pending_alarm_group_count;
+    index++
+  ) {
+    PendingAlarmGroup *group =
+        &s_pending_alarm_groups[index];
+
+    if (
+      group->occurrence_start ==
+          (int32_t)occurrence_start &&
+      (
+        group->medication_mask &
+        medication_mask
+      ) == medication_mask
+    ) {
+      group->last_reminder = minute_timestamp;
+      (void)persist_pending_alarm_groups();
+      return;
+    }
+  }
+}
+
+static void pending_alarm_remove_confirmed_group(
+    time_t occurrence_start,
+    uint16_t medication_mask
+) {
+  pending_alarm_groups_load();
+
+  for (
+    uint8_t index = 0;
+    index < s_pending_alarm_group_count;
+    index++
+  ) {
+    PendingAlarmGroup *group =
+        &s_pending_alarm_groups[index];
+
+    if (
+      group->occurrence_start !=
+          (int32_t)occurrence_start ||
+      (
+        group->medication_mask &
+        medication_mask
+      ) == 0
+    ) {
+      continue;
+    }
+
+    group->medication_mask &=
+        (uint16_t)~medication_mask;
+
+    if (group->medication_mask == 0) {
+      for (
+        uint8_t move = index + 1;
+        move < s_pending_alarm_group_count;
+        move++
+      ) {
+        s_pending_alarm_groups[move - 1] =
+            s_pending_alarm_groups[move];
+      }
+
+      s_pending_alarm_group_count--;
+      memset(
+        &s_pending_alarm_groups[
+          s_pending_alarm_group_count
+        ],
+        0,
+        sizeof(PendingAlarmGroup)
+      );
+    }
+
+    (void)persist_pending_alarm_groups();
+    return;
+  }
+}
+
 uint16_t alarm_active_medication_mask(void) {
   return
       s_alarm_active
@@ -201,10 +719,20 @@ uint16_t alarm_active_medication_mask(void) {
 }
 
 uint16_t alarm_visual_medication_mask(void) {
+  if (s_confirmation_visual_medication_mask != 0) {
+    return s_confirmation_visual_medication_mask;
+  }
+
+  if (s_alarm_active) {
+    return s_alarm_due_medication_mask;
+  }
+
+  PendingAlarmGroup group;
+
   return
-      s_confirmation_visual_medication_mask != 0
-          ? s_confirmation_visual_medication_mask
-          : alarm_active_medication_mask();
+      pending_alarm_first_group(&group)
+          ? group.medication_mask
+          : 0;
 }
 
 void alarm_release_confirmation_visual(void) {
@@ -1302,7 +1830,8 @@ uint8_t alarm_unconfirmed_symbol_mask_at(
       alarm_unconfirmed_medication_mask_at(
         timestamp
       );
-  uint8_t symbol_mask = 0;
+  uint8_t symbol_mask =
+      pending_alarm_symbol_mask();
 
   for (
     uint8_t index = 0;
@@ -1556,53 +2085,7 @@ static time_t next_reminder_timestamp_for_state(
 static AlarmEvent next_open_reminder_after(
     time_t now
 ) {
-  AlarmEvent best = { 0 };
-
-  for (
-    uint8_t index = 0;
-    index < s_medication_count;
-    index++
-  ) {
-    time_t occurrence_start = 0;
-    time_t occurrence_end = 0;
-    MedicationAlarmState *state = NULL;
-
-    if (
-      !medication_alarm_state_at(
-        index,
-        now,
-        &occurrence_start,
-        &occurrence_end,
-        &state
-      ) ||
-      !state
-    ) {
-      continue;
-    }
-
-    const time_t candidate =
-        next_reminder_timestamp_for_state(
-          now,
-          occurrence_start,
-          occurrence_end,
-          state
-        );
-
-    if (candidate <= 0) {
-      continue;
-    }
-
-    alarm_event_merge(
-      (AlarmEvent) {
-        .timestamp = candidate,
-        .medication_mask =
-            (uint16_t)(1u << index)
-      },
-      &best
-    );
-  }
-
-  return best;
+  return pending_alarm_next_reminder_after(now);
 }
 
 static AlarmEvent next_alarm_event_after(
@@ -1699,6 +2182,7 @@ void alarm_stop(void) {
   s_alarm_active = false;
   s_alarm_stop_time = 0;
   s_alarm_due_medication_mask = 0;
+  s_alarm_due_occurrence_start = 0;
   s_confirmation_visual_medication_mask = 0;
 }
 
@@ -1769,62 +2253,22 @@ static void alarm_pulse_timer_handler(void *context) {
 
 static void record_alarm_reminder_at(
     time_t timestamp,
-    uint16_t medication_mask
+    uint16_t medication_mask,
+    time_t occurrence_start
 ) {
   const int32_t minute_timestamp =
       (int32_t)(
         timestamp - (timestamp % 60)
       );
 
+  pending_alarm_record_reminder(
+    occurrence_start,
+    medication_mask,
+    minute_timestamp
+  );
+
+  medication_alarm_states_load();
   bool state_changed = false;
-
-  for (
-    uint8_t index = 0;
-    index < s_medication_count;
-    index++
-  ) {
-    if (
-      (
-        medication_mask &
-        (uint16_t)(1u << index)
-      ) == 0
-    ) {
-      continue;
-    }
-
-    MedicationAlarmState *state = NULL;
-
-    if (
-      !medication_alarm_state_at(
-        index,
-        timestamp,
-        NULL,
-        NULL,
-        &state
-      ) ||
-      !state ||
-      state->confirmed ||
-      state->suppressed
-    ) {
-      continue;
-    }
-
-    state->last_reminder =
-        minute_timestamp;
-    state_changed = true;
-  }
-
-  if (state_changed) {
-    (void)persist_medication_alarm_states();
-  }
-}
-
-static uint16_t alarm_group_mask_from_due_mask(
-    uint16_t due_medication_mask,
-    time_t timestamp
-) {
-  uint16_t pill_mask = 0;
-  uint16_t first_pen_mask = 0;
 
   for (
     uint8_t index = 0;
@@ -1834,59 +2278,35 @@ static uint16_t alarm_group_mask_from_due_mask(
     const uint16_t bit =
         (uint16_t)(1u << index);
 
-    if ((due_medication_mask & bit) == 0) {
+    if ((medication_mask & bit) == 0) {
       continue;
     }
 
+    MedicationAlarmState *state =
+        &s_medication_alarm_states[index];
+
     if (
-      s_medications[index].symbol ==
-          MEDICATION_SYMBOL_PILL
+      state->occurrence_start !=
+          (int32_t)occurrence_start ||
+      state->confirmed ||
+      state->suppressed
     ) {
-      pill_mask |= bit;
-    } else if (
-      s_medications[index].symbol ==
-          MEDICATION_SYMBOL_PEN &&
-      first_pen_mask == 0
-    ) {
-      first_pen_mask = bit;
+      continue;
     }
+
+    state->last_reminder = minute_timestamp;
+    state_changed = true;
   }
 
-  /*
-   * If this event contains a Pill, merge every currently open Pill into
-   * the same confirmation group. Its own reminder does not need to be due
-   * in this exact minute. Regular and interval Pills are one group.
-   *
-   * Pens remain individual and never get pulled into a Pill group.
-   */
-  if (pill_mask != 0) {
-    for (
-      uint8_t index = 0;
-      index < s_medication_count;
-      index++
-    ) {
-      if (
-        s_medications[index].symbol ==
-            MEDICATION_SYMBOL_PILL &&
-        alarm_medication_is_unconfirmed_due_at(
-          index,
-          timestamp
-        )
-      ) {
-        pill_mask |=
-            (uint16_t)(1u << index);
-      }
-    }
+  if (state_changed) {
+    (void)persist_medication_alarm_states();
   }
-
-  return pill_mask != 0
-      ? pill_mask
-      : first_pen_mask;
 }
 
 static void alarm_start_due_event_at(
     time_t now,
     uint16_t due_medication_mask,
+    time_t occurrence_start,
     uint16_t requested_mask
 ) {
   debug_log_event(
@@ -1906,6 +2326,8 @@ static void alarm_start_due_event_at(
 
   s_alarm_due_medication_mask =
       due_medication_mask;
+  s_alarm_due_occurrence_start =
+      occurrence_start;
 
   APP_LOG(
     APP_LOG_LEVEL_INFO,
@@ -1916,7 +2338,8 @@ static void alarm_start_due_event_at(
 
   record_alarm_reminder_at(
     now,
-    due_medication_mask
+    due_medication_mask,
+    occurrence_start
   );
 
   s_alarm_active = true;
@@ -1942,10 +2365,6 @@ static void alarm_start_due_event_at(
 static void alarm_start_for_request(
     uint16_t requested_mask
 ) {
-  if (s_alarm_active) {
-    return;
-  }
-
   if (s_transfer_screen_active) {
     schedule_next_alarm_wakeup();
     return;
@@ -1954,20 +2373,38 @@ static void alarm_start_for_request(
   const time_t now = time(NULL);
   const uint16_t due_medication_mask =
       alarm_event_medication_mask_at(now);
-  const uint16_t group_mask =
-      alarm_group_mask_from_due_mask(
-        due_medication_mask,
-        now
-      );
+
+  (void)pending_alarm_capture_due_groups_at(
+    due_medication_mask,
+    now
+  );
+
+  if (s_alarm_active) {
+    schedule_next_alarm_wakeup();
+    return;
+  }
+
+  PendingAlarmGroup group;
+
+  if (!pending_alarm_first_group(&group)) {
+    alarm_start_due_event_at(
+      now,
+      0,
+      0,
+      requested_mask
+    );
+    return;
+  }
 
   /*
-   * The wakeup cookie only explains why the OS launched Nasu. The live due
-   * calculation decides the group, so a cookie for an interval pill cannot
-   * hide another pill or Pen that is due at the same time.
+   * Pending occurrences are deliberately consumed oldest-first. A later
+   * scheduled dose is queued separately instead of being merged into the
+   * currently outstanding dose.
    */
   alarm_start_due_event_at(
     now,
-    group_mask,
+    group.medication_mask,
+    (time_t)group.occurrence_start,
     requested_mask
   );
 }
@@ -1981,22 +2418,25 @@ bool alarm_start_next_due_group(void) {
   }
 
   const time_t now = time(NULL);
-  const uint16_t group_mask =
-      alarm_group_mask_from_due_mask(
-        alarm_unconfirmed_medication_mask_at(
-          now
-        ),
-        now
-      );
+  const uint16_t due_medication_mask =
+      alarm_event_medication_mask_at(now);
 
-  if (group_mask == 0) {
+  (void)pending_alarm_capture_due_groups_at(
+    due_medication_mask,
+    now
+  );
+
+  PendingAlarmGroup group;
+
+  if (!pending_alarm_first_group(&group)) {
     schedule_next_alarm_wakeup();
     return false;
   }
 
   alarm_start_due_event_at(
     now,
-    group_mask,
+    group.medication_mask,
+    (time_t)group.occurrence_start,
     0
   );
   schedule_next_alarm_wakeup();
@@ -2054,34 +2494,39 @@ void alarm_handle_minute_tick(
     return;
   }
 
-  if (
-    s_alarm_active ||
-    s_transfer_screen_active
-  ) {
+  if (s_transfer_screen_active) {
     schedule_next_alarm_wakeup();
     return;
   }
 
-  /*
-   * Nasu is already open, so the minute tick is the foreground scheduler.
-   * Calculate the live event exactly once and start that same event.
-   */
   const time_t now = time(NULL);
   const uint16_t due_medication_mask =
       alarm_event_medication_mask_at(now);
+  const bool captured_new_group =
+      pending_alarm_capture_due_groups_at(
+        due_medication_mask,
+        now
+      );
 
-  if (due_medication_mask != 0) {
-    const uint16_t group_mask =
-        alarm_group_mask_from_due_mask(
-          due_medication_mask,
-          now
-        );
+  if (s_alarm_active) {
+    schedule_next_alarm_wakeup();
+    return;
+  }
 
-    alarm_start_due_event_at(
-      now,
-      group_mask,
-      0
-    );
+  if (
+    captured_new_group ||
+    pending_alarm_front_is_due_at(now)
+  ) {
+    PendingAlarmGroup group;
+
+    if (pending_alarm_first_group(&group)) {
+      alarm_start_due_event_at(
+        now,
+        group.medication_mask,
+        (time_t)group.occurrence_start,
+        0
+      );
+    }
   }
 
   schedule_next_alarm_wakeup();
@@ -2112,6 +2557,8 @@ bool alarm_reset_after_settings_save(void) {
 
   const bool state_reset_verified =
       reset_medication_alarm_states();
+  const bool pending_reset_verified =
+      reset_pending_alarm_groups();
 
   /*
    * Saving settings must not resurrect an occurrence whose start minute
@@ -2169,6 +2616,7 @@ bool alarm_reset_after_settings_save(void) {
 
   const bool reset_verified =
       state_reset_verified &&
+      pending_reset_verified &&
       seed_verified;
 
   if (!reset_verified) {
@@ -2195,19 +2643,10 @@ bool alarm_reset_after_settings_save(void) {
 void alarm_confirmation_received(
     MedicationSymbol symbol
 ) {
-  const time_t now = time(NULL);
-
-  /*
-   * Confirmation belongs to the current alarm group.
-   *
-   * - PILL groups contain every pill that collided in this alarm run.
-   * - PEN groups contain exactly one Pen.
-   *
-   * This keeps one-tap pill confirmation while preventing one Pen
-   * confirmation from consuming other due Pens.
-   */
   uint16_t target_mask =
       s_alarm_due_medication_mask;
+  const time_t target_occurrence_start =
+      s_alarm_due_occurrence_start;
 
   debug_log_event(
     NASU_DBG_ALARM_CONFIRM,
@@ -2242,6 +2681,7 @@ void alarm_confirmation_received(
     return;
   }
 
+  medication_alarm_states_load();
   bool state_changed = false;
 
   for (
@@ -2252,26 +2692,21 @@ void alarm_confirmation_received(
     const uint16_t medication_bit =
         (uint16_t)(1u << index);
 
-    if (
-      (
-        target_mask &
-        medication_bit
-      ) == 0
-    ) {
+    if ((target_mask & medication_bit) == 0) {
       continue;
     }
 
-    MedicationAlarmState *state = NULL;
+    MedicationAlarmState *state =
+        &s_medication_alarm_states[index];
 
+    /*
+     * Only mirror the confirmation into the legacy per-medication state
+     * when that state still represents this exact occurrence. A later
+     * occurrence of the same medication may already be current.
+     */
     if (
-      !medication_alarm_state_at(
-        index,
-        now,
-        NULL,
-        NULL,
-        &state
-      ) ||
-      !state ||
+      state->occurrence_start !=
+          (int32_t)target_occurrence_start ||
       state->confirmed
     ) {
       continue;
@@ -2285,6 +2720,11 @@ void alarm_confirmation_received(
     (void)persist_medication_alarm_states();
   }
 
+  pending_alarm_remove_confirmed_group(
+    target_occurrence_start,
+    target_mask
+  );
+
   s_alarm_due_medication_mask &=
       (uint16_t)~target_mask;
 
@@ -2293,10 +2733,8 @@ void alarm_confirmation_received(
     s_alarm_due_medication_mask == 0
   ) {
     /*
-     * Persist the confirmation immediately, but keep rendering exactly the
-     * group that was just confirmed until Vespa has fully scrolled in.
-     * The hold is presentation-only and is released by medication_ui once
-     * the Vespa snap has settled.
+     * Keep rendering the group that was just confirmed until Vespa has
+     * fully scrolled in. The next queued occurrence starts afterwards.
      */
     alarm_stop();
     s_confirmation_visual_medication_mask =
@@ -2385,6 +2823,7 @@ static void suppress_historical_intervals_on_manual_launch(
 void medication_alarm_init(void) {
   load_alarm_settings();
   medication_alarm_states_load();
+  pending_alarm_groups_load();
   s_launch_wakeup_medication_mask = 0;
 
   speaker_set_finish_callback(

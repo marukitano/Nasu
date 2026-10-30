@@ -1,0 +1,82 @@
+name: Build Pebble app
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "Nasu.pbw"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PEBBLE_TRACK: disabled
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            nodejs npm libsdl2-2.0-0 libglib2.0-0 libpixman-1-0 zlib1g
+
+      - name: Install pebble-tool
+        run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          uv tool install pebble-tool --python 3.13
+
+      - name: Cache Pebble SDK
+        uses: actions/cache@v4
+        with:
+          path: ~/.pebble-sdk
+          key: pebble-sdk-${{ runner.os }}-latest-v1
+
+      - name: Install Pebble SDK
+        run: pebble sdk install latest < /dev/null
+
+      - name: Clean build
+        run: |
+          pebble clean
+          pebble build
+
+      - name: Stage installable PBW
+        run: |
+          PBW="$(find build -maxdepth 1 -type f -name '*.pbw' -print -quit)"
+          test -n "$PBW"
+          cp "$PBW" Nasu.pbw
+          ls -lh Nasu.pbw
+
+      - name: Upload PBW artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nasu-pbw
+          path: Nasu.pbw
+          if-no-files-found: error
+
+      - name: Commit fresh PBW to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f Nasu.pbw
+
+          if git diff --cached --quiet; then
+            echo "Nasu.pbw is already up to date."
+            exit 0
+          fi
+
+          git commit -m "build: update Nasu.pbw [skip ci]"
+          git push
