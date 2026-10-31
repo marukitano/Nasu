@@ -2228,12 +2228,56 @@ static void load_medication_appearances(void) {
     return;
   }
 
-  const int stored_count = persist_read_int(
-    MEDICATION_APPEARANCE_COUNT_PERSIST_KEY
-  );
+  int stored_count = -1;
+
+  if (
+    persist_get_size(
+      MEDICATION_APPEARANCE_COUNT_PERSIST_KEY
+    ) == (int)sizeof(int32_t)
+  ) {
+    stored_count = persist_read_int(
+      MEDICATION_APPEARANCE_COUNT_PERSIST_KEY
+    );
+  }
 
   if (stored_count < 0 || stored_count > MAX_MEDICATIONS) {
-    return;
+    /*
+     * Nasu 1.1.7 briefly used persist key 219 for an alarm queue block,
+     * colliding with MEDICATION_APPEARANCE_COUNT_PERSIST_KEY. Recover the
+     * appearance count from the still-intact per-medication appearance blobs
+     * and immediately repair key 219.
+     */
+    uint8_t recovered_count = 0;
+
+    for (
+      uint8_t index = 0;
+      index < MAX_MEDICATIONS;
+      index++
+    ) {
+      const int key =
+          medication_appearance_persist_key(index);
+
+      if (
+        persist_exists(key) &&
+        persist_get_size(key) ==
+            (int)sizeof(MedicationAppearance)
+      ) {
+        recovered_count = (uint8_t)(index + 1);
+      }
+    }
+
+    stored_count = recovered_count;
+
+    (void)persist_write_int(
+      MEDICATION_APPEARANCE_COUNT_PERSIST_KEY,
+      stored_count
+    );
+
+    APP_LOG(
+      APP_LOG_LEVEL_WARNING,
+      "Recovered medication appearance count: %d",
+      stored_count
+    );
   }
 
   s_medication_appearance_count = (uint8_t)stored_count;

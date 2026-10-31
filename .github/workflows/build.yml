@@ -10,6 +10,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: nasu-main-build
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
