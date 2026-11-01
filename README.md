@@ -78,6 +78,11 @@ Für Medikamente lassen sich **tägliche, wöchentliche, monatliche und
 **2–255 Kalendertage**, ein Startdatum und eine Tageszeit einstellbar –
 beispielsweise alle 10 Tage. Die Termine werden vom Startdatum aus berechnet.
 
+Für **alle 10 Tage** auf dem Smartphone eine Tageszeit auswählen, den Rhythmus
+**Alle X Tage** wählen, **10** und das Startdatum eintragen, das Medikament
+aktivieren und die Einstellungen an die Uhr senden. Der erste Termin liegt
+am Startdatum; eine spätere Einnahmebestätigung verschiebt den Rhythmus nicht.
+
 Alternativ zur Einnahme zu einer Tageszeit kann **Intervall** gewählt werden:
 alle **2, 3, 4, 6, 8 oder 12 Stunden** ab einer einstellbaren Startzeit.
 Dieser Modus ersetzt den täglichen, wöchentlichen, monatlichen oder
@@ -125,6 +130,9 @@ Die Einstellungen werden lokal gespeichert und über
 - **Pebble Time 2 (`emery`)**
 
 ### Build
+
+Die installierbare Version **1.1.7** liegt als [`Nasu.pbw`](Nasu.pbw) im
+Repository und enthält „alle X Tage“ sowie den Fix für zweifarbige Medikamente.
 
 ```bash
 pebble clean
@@ -258,6 +266,11 @@ Every-X-days schedules support **2–255 calendar days**, a start date and
 a daypart—for example, every 10 days. Scheduled dates are calculated
 from the start date.
 
+For **every 10 days**, select a daypart on your phone, choose **Every X days**,
+enter **10** and the start date, enable the medication and save the settings
+to the watch. The first dose is scheduled on the start date; confirming a
+later intake does not shift the schedule.
+
 Alternatively, select **Interval** instead of a daypart: every
 **2, 3, 4, 6, 8 or 12 hours** from a configurable start time. This mode
 replaces the daily, weekly, monthly or every-X-days schedule.
@@ -304,6 +317,10 @@ Settings are stored locally and transferred to the watch through
 - **Pebble Time 2 (`emery`)**
 
 ### Build
+
+The installable version **1.1.7** is available as [`Nasu.pbw`](Nasu.pbw) in
+this repository and includes every-X-days schedules and the two-color
+medication fix.
 
 ```bash
 pebble clean
