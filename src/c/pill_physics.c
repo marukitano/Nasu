@@ -238,14 +238,23 @@ static bool pill_physics_medication_is_visible(
 
   const MedicationSettings *medication =
       &s_medications[medication_index];
+  const uint16_t active_mask =
+      alarm_visual_medication_mask();
+  const bool selected =
+      active_mask != 0
+          ? (
+              active_mask &
+              (uint16_t)(1u << medication_index)
+            ) != 0
+          : alarm_medication_is_unconfirmed_due_at(
+              medication_index,
+              time(NULL)
+            );
 
   return
       medication->icon_set &&
       medication->symbol == MEDICATION_SYMBOL_PILL &&
-      alarm_medication_is_unconfirmed_due_at(
-        medication_index,
-        time(NULL)
-      );
+      selected;
 }
 
 static int32_t pill_rb_clamp_angle(int32_t angle) {
